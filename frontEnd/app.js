@@ -90,6 +90,14 @@ function formatDuration(ms) {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
+// "just now", "4 min ago", "2 hr ago"
+function timeAgo(time) {
+  const mins = Math.floor((Date.now() - new Date(time).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  return `${Math.floor(mins / 60)} hr ago`;
+}
+
 // ---------- FLIGHT HELPERS ----------
 
 // Where is this flight right now? upcoming / air / landed / canceled / diverted
@@ -200,6 +208,17 @@ function renderHeadline(hero) {
   document.getElementById("headline-sub").textContent = sub;
 }
 
+// Small line at the bottom of the card: how fresh is the data?
+function updatedLine(f, phase) {
+  if (!f.lastCheckedUtc) {
+    return `<p class="updated"><span class="fresh-dot dot-idle"></span>Live tracking starts 3 hr before departure</p>`;
+  }
+  const mins = (Date.now() - new Date(f.lastCheckedUtc).getTime()) / 60000;
+  // During a flight, data older than 45 min means something may be stuck
+  const stale = (phase === "air" || phase === "upcoming") && mins > 45;
+  return `<p class="updated"><span class="fresh-dot ${stale ? "dot-stale" : "dot-fresh"}"></span>Live data · updated ${timeAgo(f.lastCheckedUtc)}</p>`;
+}
+
 function renderHero(hero) {
   const el = document.getElementById("hero");
   if (!hero) { el.innerHTML = ""; return; }
@@ -271,6 +290,8 @@ function renderHero(hero) {
         </div>
         ${extras.join("")}
       </div>
+
+      ${updatedLine(hero, phase)}
     </article>
   `;
 }

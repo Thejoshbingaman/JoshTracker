@@ -177,6 +177,17 @@ button:disabled { opacity: 0.6; }
 .day { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .was { color: var(--muted); font-size: 12px; text-decoration: line-through; margin-top: 2px; }
 
+.updated {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px; color: var(--muted);
+}
+.fresh-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot-fresh { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dot-stale { background: var(--warn); }
+.dot-idle { background: var(--muted); }
+
 /* ---------- Map ---------- */
 .map-card { padding: 0; overflow: hidden; margin-bottom: 14px; }
 #map { height: 230px; width: 100%; background: #0b0d14; }

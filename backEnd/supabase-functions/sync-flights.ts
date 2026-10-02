@@ -3,11 +3,33 @@
 // If you change it in Supabase, paste the new version here too.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import webpush from "npm:web-push@3";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
+
+webpush.setVapidDetails(
+  Deno.env.get("VAPID_SUBJECT")!,
+  Deno.env.get("VAPID_PUBLIC_KEY")!,
+  Deno.env.get("VAPID_PRIVATE_KEY")!
+);
+
+// Send a "something went wrong" alert to Josh's phones only
+async function alertJosh(message: string) {
+  const adminId = Deno.env.get("ADMIN_USER_ID");
+  if (!adminId) return;
+  const { data: subs } = await supabase.from("push_subscriptions").select("*").eq("user_id", adminId);
+  for (const s of subs || []) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+        JSON.stringify({ title: "JoshTracker problem", body: message.slice(0, 200), tag: "admin" })
+      );
+    } catch { /* ignore */ }
+  }
+}
 
 // STEP 1: Use the saved Google refresh token to get a short-lived access token
 async function getGoogleAccessToken() {
@@ -58,7 +80,7 @@ function parseFlightEvent(event: any) {
   const originMatch = location.match(/([A-Z]{3})$/);
   const originCode = originMatch ? originMatch[1] : null;
 
-  return { flightNumber, originCode, date };
+  return { flightNumber, originCode, date, summary };
 }
 
 // STEP 4: Look up the flight on AeroDataBox and save it
@@ -116,17 +138,27 @@ async function lookupAndSave(flight: any) {
 }
 
 // MAIN
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  // Test mode: send {"testAlert": true} to check that problem alerts reach your phone
+  let body: any = {};
+  try { body = await req.json(); } catch { /* no body */ }
+  if (body.testAlert) {
+    await alertJosh("Test: problem alerts are working.");
+    return Response.json({ ok: true, message: "Test problem alert sent" });
+  }
+
   try {
     const accessToken = await getGoogleAccessToken();
     const events = await getCalendarEvents(accessToken);
 
-    const flights = events
+    const parsed = events
       .filter((e: any) => e.summary && e.summary.startsWith("Flight"))
-      .map(parseFlightEvent)
-      .filter((f: any) => f.flightNumber && f.originCode && f.date);
+      .map(parseFlightEvent);
 
-    const results = [];
+    const flights = parsed.filter((f: any) => f.flightNumber && f.originCode && f.date);
+    const unreadable = parsed.filter((f: any) => !(f.flightNumber && f.originCode && f.date));
+
+    const results: string[] = [];
     for (const flight of flights) {
       results.push(await lookupAndSave(flight));
     }
@@ -135,8 +167,16 @@ Deno.serve(async () => {
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     await supabase.from("flights").delete().lt("arrivalUtc", cutoff);
 
-    return Response.json({ ok: true, results });
+    // Anything that did not save, or a calendar event we could not read = a problem
+    const problems = results.filter((r) => !r.includes(": saved"));
+    for (const u of unreadable) problems.push(`could not read calendar event "${u.summary}"`);
+    if (problems.length > 0) {
+      await alertJosh("Daily sync: " + problems.join("; "));
+    }
+
+    return Response.json({ ok: true, results, problems });
   } catch (err) {
+    await alertJosh("Daily sync failed: " + String(err));
     return Response.json({ ok: false, error: String(err) }, { status: 500 });
   }
 });
