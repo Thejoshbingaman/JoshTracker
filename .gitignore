@@ -1,0 +1,14 @@
+# Secrets - never upload these
+.env
+credentials.json
+credentials.json.json
+token.json
+client_secret*.json
+
+# Installed packages (can be reinstalled with "npm install")
+node_modules/
+
+# Junk files
+*.log
+.DS_Store
+Thumbs.db

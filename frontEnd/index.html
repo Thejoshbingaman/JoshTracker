@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>JoshTracker</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0b0d14">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="JoshTracker">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+
+    <!-- LOGIN SCREEN: shown when nobody is signed in -->
+    <section id="login-view" class="card login hidden">
+      <h1>JoshTracker</h1>
+      <p class="muted">Sign in to see where Josh is.</p>
+      <form id="login-form">
+        <input id="email" type="email" placeholder="Email" autocomplete="email" required>
+        <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </section>
+
+    <!-- DASHBOARD: shown when signed in -->
+    <section id="dashboard-view" class="hidden">
+      <header class="topbar">
+        <span class="brand">JoshTracker</span>
+        <button id="logout" class="ghost">Sign out</button>
+      </header>
+
+      <!-- "Turn on alerts" card (hides itself once alerts are on) -->
+      <div id="alerts-card" class="card alerts hidden">
+        <div>
+          <span class="label">Alerts</span>
+          <p id="alerts-text">Get a ping when Josh departs, lands, or is delayed.</p>
+        </div>
+        <button id="alerts-button" class="small">Turn on</button>
+      </div>
+
+      <!-- Big status line at the top ("Josh is flying to Los Angeles") -->
+      <div class="headline">
+        <p id="headline-kicker" class="kicker"></p>
+        <h1 id="headline-title"></h1>
+        <p id="headline-sub" class="headline-sub"></p>
+      </div>
+
+      <!-- The main flight card -->
+      <div id="hero"></div>
+
+      <!-- Map of the current flight -->
+      <div id="map-card" class="card map-card hidden">
+        <div id="map"></div>
+      </div>
+
+      <!-- "Home in ..." countdown -->
+      <div id="home-card"></div>
+
+      <!-- Send a kiss -->
+      <button id="kiss-button" class="kiss" type="button">
+        <span class="kiss-heart" aria-hidden="true">♥</span>
+        <span id="kiss-label">Send a kiss</span>
+      </button>
+
+      <!-- Next 7 days timeline -->
+      <h2 id="timeline-title" class="section-title hidden">Next 7 days</h2>
+      <div id="timeline" class="card timeline hidden"></div>
+
+      <p class="footnote">All times are local to each airport.</p>
+    </section>
+
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
