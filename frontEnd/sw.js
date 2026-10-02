@@ -1,7 +1,33 @@
 // Service worker: runs in the background so the phone can show alerts
 // even when JoshTracker is closed.
 
-self.addEventListener("install", () => self.skipWaiting());
+const CHECKLIST_CACHE = "checklist-v1";
+const CHECKLIST_URL = new URL("checklist.html", self.registration.scope).href;
+
+// Save the checklist page on install so it works with no signal
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CHECKLIST_CACHE)
+      .then((cache) => cache.add(CHECKLIST_URL))
+      .catch(() => {})
+      .then(() => self.skipWaiting())
+  );
+});
+
+// Only the checklist page is served offline. Everything else goes to the network as normal.
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== "GET" || !url.pathname.endsWith("/checklist.html")) return;
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CHECKLIST_CACHE).then((cache) => cache.put(CHECKLIST_URL, copy));
+        return response;
+      })
+      .catch(() => caches.match(CHECKLIST_URL))
+  );
+});
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
 // An alert arrives from the server
