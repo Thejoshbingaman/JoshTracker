@@ -642,6 +642,85 @@ kissButton.addEventListener("click", async () => {
   }, 4000);
 });
 
+// ---------- WELCOME NOTE ----------
+// Shows once when the user has "showWelcome": true in their account (set with SQL).
+// The note text lives in the welcome_note table, so it never appears in the public code.
+
+const welcome = document.getElementById("welcome");
+const steps = [...welcome.querySelectorAll(".step")];
+const dots = document.getElementById("welcome-dots");
+const backBtn = document.getElementById("welcome-back");
+const nextBtn = document.getElementById("welcome-next");
+let stepIndex = 0;
+let markSeenOnClose = false;
+
+function showStep(i) {
+  stepIndex = i;
+  steps.forEach((s, n) => s.classList.toggle("hidden", n !== i));
+  dots.innerHTML = steps.map((_, n) => `<span class="dot${n === i ? " on" : ""}"></span>`).join("");
+  backBtn.classList.toggle("invisible", i === 0);
+  nextBtn.textContent = i === steps.length - 1 ? "Let's go ♥" : "Next";
+  if (i === 2) renderWelcomeAlerts();
+  welcome.scrollTop = 0;
+}
+
+// Step 3: show whether alerts are on, with a button if they're not
+function renderWelcomeAlerts() {
+  const box = document.getElementById("welcome-alerts");
+  const cardShowing = !alertsCard.classList.contains("hidden");
+  const buttonShowing = !alertsButton.classList.contains("hidden");
+  if (!cardShowing) {
+    box.innerHTML = `<p class="alerts-on">✓ Alerts are on</p>`;
+  } else if (buttonShowing) {
+    box.innerHTML = `<button type="button" id="welcome-alerts-btn">Turn on alerts</button>`;
+    document.getElementById("welcome-alerts-btn").addEventListener("click", () => {
+      alertsButton.click();
+      setTimeout(renderWelcomeAlerts, 1500);
+    });
+  } else {
+    box.innerHTML = `<p class="welcome-small">${alertsText.textContent}</p>`;
+  }
+}
+
+async function loadNote() {
+  const { data } = await supabase.from("welcome_note").select("*").eq("id", 1).maybeSingle();
+  if (data) {
+    document.getElementById("welcome-title").textContent = data.title || "Happy anniversary";
+    document.getElementById("welcome-message").textContent = data.message || "";
+    document.getElementById("welcome-signoff").textContent = data.signoff || "";
+  }
+}
+
+async function openWelcome(markSeen) {
+  markSeenOnClose = markSeen;
+  await loadNote();
+  showStep(0);
+  welcome.classList.remove("hidden");
+  document.body.classList.add("no-scroll");
+}
+
+async function closeWelcome() {
+  welcome.classList.add("hidden");
+  document.body.classList.remove("no-scroll");
+  if (markSeenOnClose) {
+    await supabase.auth.updateUser({ data: { showWelcome: false } });
+    markSeenOnClose = false;
+  }
+}
+
+backBtn.addEventListener("click", () => stepIndex > 0 && showStep(stepIndex - 1));
+nextBtn.addEventListener("click", () => {
+  if (stepIndex < steps.length - 1) showStep(stepIndex + 1);
+  else closeWelcome();
+});
+document.getElementById("open-welcome").addEventListener("click", () => openWelcome(false));
+
+// Called after sign-in: open the note if this account is flagged for it
+async function maybeShowWelcome() {
+  const { data: { user } } = await supabase.auth.getUser(); // fresh from the server
+  if (user?.user_metadata?.showWelcome) openWelcome(true);
+}
+
 // ---------- SIGN IN / SIGN OUT ----------
 
 function startTimers() {
@@ -661,7 +740,8 @@ async function showCorrectView() {
     dashboardView.classList.remove("hidden");
     await loadFlights();
     startTimers();
-    refreshAlertsCard();
+    await refreshAlertsCard();
+    maybeShowWelcome();
   } else {
     stopTimers();
     dashboardView.classList.add("hidden");

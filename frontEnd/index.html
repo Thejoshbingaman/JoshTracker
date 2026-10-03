@@ -77,10 +77,71 @@
       <div id="timeline" class="card timeline hidden"></div>
 
       <p class="footnote">All times are local to each airport.</p>
+      <p class="legal"><button type="button" id="open-welcome" class="link-button">♥ Read Josh's note again</button></p>
       <p class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></p>
     </section>
 
   </main>
+
+  <!-- WELCOME: shown once on her first sign-in (and any time from the footer link) -->
+  <div id="welcome" class="welcome hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+    <div class="welcome-inner">
+
+      <!-- Step 1: the note (text comes from the database, so it stays private) -->
+      <section class="step" data-step="0">
+        <span class="welcome-heart" aria-hidden="true">♥</span>
+        <p class="kicker">For you</p>
+        <h1 id="welcome-title">Happy anniversary</h1>
+        <p id="welcome-message" class="welcome-message"></p>
+        <p id="welcome-signoff" class="welcome-signoff"></p>
+      </section>
+
+      <!-- Step 2: what the app does -->
+      <section class="step hidden" data-step="1">
+        <p class="kicker">How it works</p>
+        <h2>Always know where I am</h2>
+        <ul class="tour">
+          <li><span class="tour-icon">✈</span><div><strong>The headline</strong><span>Tells you where I am right now: home, away, or in the air.</span></div></li>
+          <li><span class="tour-icon">⏱</span><div><strong>The flight card</strong><span>Counts down to takeoff and landing. Shows my gate and any delays.</span></div></li>
+          <li><span class="tour-icon">◎</span><div><strong>The map</strong><span>Shows my plane moving across the country while I fly.</span></div></li>
+          <li><span class="tour-icon">♥</span><div><strong>Home in</strong><span>Counts down to the minute I land back home.</span></div></li>
+          <li><span class="tour-icon">▦</span><div><strong>Next 7 days</strong><span>My whole week at a glance.</span></div></li>
+        </ul>
+        <p class="welcome-small">It updates by itself. My flights come straight from my calendar, so you never have to ask.</p>
+      </section>
+
+      <!-- Step 3: alerts -->
+      <section class="step hidden" data-step="2">
+        <p class="kicker">Alerts</p>
+        <h2>Your phone will tell you</h2>
+        <ul class="alert-list">
+          <li><strong>The night before</strong> I fly</li>
+          <li><strong>If I'm delayed</strong> 15 minutes or more</li>
+          <li><strong>When I take off</strong></li>
+          <li><strong>10 minutes before</strong> I land</li>
+          <li><strong>When I land</strong>, and when I'm home</li>
+        </ul>
+        <div id="welcome-alerts" class="welcome-alerts"></div>
+        <p class="welcome-small">Tips: always open JoshTracker from the icon on your home screen. If you use Focus or Do Not Disturb, add JoshTracker to the allowed apps so you don't miss me landing.</p>
+      </section>
+
+      <!-- Step 4: kisses -->
+      <section class="step hidden" data-step="3">
+        <span class="welcome-heart" aria-hidden="true">♥</span>
+        <p class="kicker">One more thing</p>
+        <h2>Send me a kiss</h2>
+        <p class="welcome-message">Tap the pink button any time and my phone buzzes, wherever I am. I'll send them back.</p>
+      </section>
+
+      <div class="welcome-nav">
+        <div class="dots" id="welcome-dots"></div>
+        <div class="welcome-buttons">
+          <button type="button" id="welcome-back" class="ghost">Back</button>
+          <button type="button" id="welcome-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module" src="app.js"></script>
 </body>
