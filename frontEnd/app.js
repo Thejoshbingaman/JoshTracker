@@ -242,7 +242,6 @@ function renderHero(hero) {
 
   // Only show gate / baggage when we have them
   const extras = [];
-  if (hero.departureGate) extras.push(`<div><span class="label">Gate</span><span class="time">${hero.departureGate}</span></div>`);
   if (hero.baggageBelt) extras.push(`<div><span class="label">Baggage</span><span class="time">Belt ${hero.baggageBelt}</span></div>`);
 
   el.innerHTML = `
@@ -451,26 +450,35 @@ function renderMap(hero) {
 
   const from = [hero.originLat, hero.originLon];
   const to = [hero.destinationLat, hero.destinationLon];
-  const path = greatCirclePoints(from, to);
   const phase = phaseOf(hero);
-  const split = Math.round(progressOf(hero) * (path.length - 1));
+  const live = phase === "air" && hero.lat != null && hero.lon != null;
 
-  // Full route (faint dashes) and the part already flown (bright)
-  L.polyline(path, { color: "#ffffff", opacity: 0.3, weight: 2, dashArray: "4 6" }).addTo(mapLayers);
-  if (split > 0) {
-    L.polyline(path.slice(0, split + 1), { color: "#a78bfa", weight: 3 }).addTo(mapLayers);
+  // Where the plane is: its live position, or an estimate from the schedule
+  const fullPath = greatCirclePoints(from, to);
+  const estIndex = Math.round(progressOf(hero) * (fullPath.length - 1));
+  const pos = live ? [hero.lat, hero.lon] : fullPath[estIndex];
+
+  // Bright line = flown so far, dashed line = still to go.
+  // Both lines pass through the plane, so it always sits on the route.
+  let flown, toGo;
+  if (phase === "air") {
+    flown = greatCirclePoints(from, pos, 32);
+    toGo = greatCirclePoints(pos, to, 32);
+  } else if (phase === "landed") {
+    flown = fullPath; toGo = [];
+  } else {
+    flown = []; toGo = fullPath;
   }
+  if (toGo.length) L.polyline(toGo, { color: "#ffffff", opacity: 0.3, weight: 2, dashArray: "4 6" }).addTo(mapLayers);
+  if (flown.length) L.polyline(flown, { color: "#a78bfa", weight: 3 }).addTo(mapLayers);
 
   // Airports
   L.marker(from, { icon: airportIcon(hero.origin), interactive: false }).addTo(mapLayers);
   L.marker(to, { icon: airportIcon(hero.destination), interactive: false }).addTo(mapLayers);
 
-  // Plane: live position if we have it, otherwise an estimate from the schedule
+  // Plane, pointing the way it's flying
   if (phase === "air") {
-    const live = hero.lat != null && hero.lon != null;
-    const pos = live ? [hero.lat, hero.lon] : path[split];
-    const i = Math.min(split, path.length - 2);
-    const heading = hero.heading ?? bearing(path[i], path[i + 1]);
+    const heading = hero.heading ?? (toGo.length > 1 ? bearing(toGo[0], toGo[1]) : bearing(from, to));
     L.marker(pos, {
       interactive: false,
       icon: L.divIcon({

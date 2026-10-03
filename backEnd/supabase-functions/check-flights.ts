@@ -37,10 +37,18 @@ function offsetMinutes(localString: string) {
   return sign * (parseInt(off.slice(1, 3)) * 60 + parseInt(off.slice(4, 6)));
 }
 
-// "6:10 AM" in the airport's local time
-function localTime(utcTime: string, localString: string) {
-  const d = new Date(new Date(utcTime).getTime() + offsetMinutes(localString) * 60000);
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+// Alert times are shown on HER clock (Eastern), not the airport's
+const ALERT_TIME_ZONE = "America/New_York";
+function localTime(utcTime: string, _localString?: string) {
+  return new Date(utcTime).toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit", timeZone: ALERT_TIME_ZONE,
+  });
+}
+
+// "Sun 9:50 PM" on her clock (used when the day could be confusing)
+function dayAndTime(utcTime: string) {
+  const day = new Date(utcTime).toLocaleDateString("en-US", { weekday: "short", timeZone: ALERT_TIME_ZONE });
+  return `${day} ${localTime(utcTime)}`;
 }
 
 // Best known times
@@ -147,15 +155,26 @@ async function alertsFor(f: any) {
       `${f.flightNumber} ${f.origin} → ${f.destination}. He'll share a new plan soon.`);
   }
 
-  // 2. Flight tomorrow: from 7 PM (departure airport time) the evening before
+  // 2. Flight tomorrow: at 7 PM HER time (Eastern) the evening before his departure day
   if (!f.notifiedTomorrow && !inAir && !landed) {
-    const depLocal = new Date(new Date(f.departureUtc).getTime() + offsetMinutes(f.departureLocal) * 60000);
-    const sevenPmBefore = Date.UTC(depLocal.getUTCFullYear(), depLocal.getUTCMonth(), depLocal.getUTCDate() - 1, 19, 0)
-      - offsetMinutes(f.departureLocal) * 60000;
+    const [y, m, d] = f.departureLocal.slice(0, 10).split("-").map(Number); // his departure date, airport time
+    const now = new Date();
+    const etOffset = (Date.parse(now.toLocaleString("en-US", { timeZone: "UTC" })) -
+      Date.parse(now.toLocaleString("en-US", { timeZone: ALERT_TIME_ZONE }))) / 60000; // 240 in summer, 300 in winter
+    const sevenPmBefore = Date.UTC(y, m - 1, d - 1, 19, 0) + etOffset * 60000;
     const toDeparture = minutesUntil(departureTime(f));
     if (Date.now() >= sevenPmBefore && toDeparture > 120) {
       await send("notifiedTomorrow", "Josh flies tomorrow",
-        `${f.origin} → ${f.destination} at ${localTime(departureTime(f), f.departureLocal)}. Flight ${f.flightNumber}.`);
+        `${f.origin} → ${f.destination}, ${dayAndTime(departureTime(f))} your time. Flight ${f.flightNumber}.`);
+    }
+  }
+
+  // 2b. Boarding: about 35 minutes before departure (or when the airline says "Boarding")
+  if (!f.notifiedBoarding && !inAir && !landed && !["Canceled", "CanceledUncertain", "Diverted"].includes(status)) {
+    const toDeparture = minutesUntil(departureTime(f));
+    if (status === "Boarding" || (toDeparture <= 35 && toDeparture > -15)) {
+      await send("notifiedBoarding", "Josh is boarding",
+        `Flight ${f.flightNumber} to ${dest} leaves at ${localTime(departureTime(f))}.`);
     }
   }
 
@@ -178,8 +197,9 @@ async function alertsFor(f: any) {
     if (landed) {
       flags.notifiedDeparted = true; // too late to matter; skip it
     } else {
-      await send("notifiedDeparted", "Josh is in the air",
-        `Flying to ${dest}. Lands around ${localTime(arrivalTime(f), f.arrivalLocal)}.`);
+      flags.notifiedBoarding = true; // no boarding alert after he's already left
+      await send("notifiedDeparted", "Josh is on his way",
+        `His plane left the gate. Lands in ${dest} around ${localTime(arrivalTime(f))}.`);
     }
   }
 
