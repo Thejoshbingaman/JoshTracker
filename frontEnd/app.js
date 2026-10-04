@@ -238,7 +238,11 @@ function renderHero(hero) {
   if (phase === "landed") { countLabel = "Landed"; countValue = formatAt(arrivalTime(hero), hero.arrivalLocal, false); }
 
   const delay = delayMinutes(hero);
-  const statusText = STATUS_TEXT[hero.status] || hero.status || "Scheduled";
+  // The pill follows what the card shows, so it can't say "In the air" after landing
+  const statusText =
+    phase === "landed" ? "Landed" :
+    phase === "air" ? "In the air" :
+    STATUS_TEXT[hero.status] || hero.status || "Scheduled";
 
   // Only show gate / baggage when we have them
   const extras = [];

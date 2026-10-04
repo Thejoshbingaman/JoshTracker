@@ -158,9 +158,21 @@ Deno.serve(async (req) => {
     const flights = parsed.filter((f: any) => f.flightNumber && f.originCode && f.date);
     const unreadable = parsed.filter((f: any) => !(f.flightNumber && f.originCode && f.date));
 
+    // Save API calls: a flight that is already saved and more than 2 days away
+    // is skipped. It gets refreshed daily once it is within 2 days.
+    const { data: saved } = await supabase.from("flights").select("flightNumber, date, departureUtc");
     const results: string[] = [];
     for (const flight of flights) {
-      results.push(await lookupAndSave(flight));
+      const match = (saved || []).find((r: any) =>
+        r.flightNumber === flight.flightNumber &&
+        Math.abs(new Date(r.date).getTime() - new Date(flight.date).getTime()) <= 86400000
+      );
+      const farAway = match && new Date(match.departureUtc).getTime() - Date.now() > 2 * 86400000;
+      if (farAway) {
+        results.push(`${flight.flightNumber}: saved (up to date, no API call)`);
+      } else {
+        results.push(await lookupAndSave(flight));
+      }
     }
 
     // Delete flights that landed more than 24 hours ago

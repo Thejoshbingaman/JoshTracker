@@ -58,14 +58,21 @@ const arrivalTime = (f: any) =>
 
 // ================= LIVE CHECKS (same as before) =================
 
+// Decide if this flight needs a live check right now.
+// Budget: about 15 API calls per flight, to stay inside the free 400 a month.
 function shouldCheck(f: any) {
   if (["Arrived", "Canceled", "Diverted"].includes(f.status)) return false;
   const toDeparture = minutesUntil(f.revisedDepartureUtc || f.departureUtc);
   const toArrival = minutesUntil(f.revisedArrivalUtc || f.predictedArrivalUtc || f.arrivalUtc);
-  if (toDeparture > 180 || toArrival < -120) return false;
+
+  // Watch from 1 hour before departure until 90 min after expected landing
+  if (toDeparture > 60 || toArrival < -90) return false;
+
   const sinceLastCheck = f.lastCheckedUtc ? -minutesUntil(f.lastCheckedUtc) : 9999;
-  const nearEvent = Math.abs(toDeparture) <= 60 || Math.abs(toArrival) <= 60;
-  return sinceLastCheck >= (nearEvent ? 9 : 29);
+  const nearDeparture = toDeparture <= 60 && toDeparture >= -30; // catch the gate departure
+  const nearLanding = toArrival <= 20;                           // catch the landing
+  const interval = nearLanding ? 9 : nearDeparture ? 14 : 44;    // minutes between checks
+  return sinceLastCheck >= interval;
 }
 
 async function checkFlight(f: any) {
@@ -113,8 +120,13 @@ async function checkFlight(f: any) {
 // ================= ALERTS =================
 
 // Send one alert to every phone that turned alerts on
+// Flight alerts are for her: once anyone besides Josh has alerts on, Josh's phones are skipped.
+// (Problem alerts and kisses are handled elsewhere and still reach Josh.)
 async function sendToAll(payload: any) {
-  const { data: subs } = await supabase.from("push_subscriptions").select("*");
+  const { data: all } = await supabase.from("push_subscriptions").select("*");
+  const adminId = Deno.env.get("ADMIN_USER_ID");
+  const others = (all || []).filter((s: any) => s.user_id !== adminId);
+  const subs = others.length > 0 ? others : (all || []);
   let sent = 0;
   for (const s of subs || []) {
     try {
@@ -200,15 +212,6 @@ async function alertsFor(f: any) {
       flags.notifiedBoarding = true; // no boarding alert after he's already left
       await send("notifiedDeparted", "Josh is on his way",
         `His plane left the gate. Lands in ${dest} around ${localTime(arrivalTime(f))}.`);
-    }
-  }
-
-  // 5. Landing in about 10 minutes
-  if (inAir && !f.notifiedLanding) {
-    const toArrival = minutesUntil(arrivalTime(f));
-    if (toArrival <= 12 && toArrival > -5) {
-      await send("notifiedLanding", goingHome ? "Josh is almost home" : "Josh lands in about 10 minutes",
-        `Arriving in ${dest} at ${localTime(arrivalTime(f), f.arrivalLocal)}.`);
     }
   }
 
