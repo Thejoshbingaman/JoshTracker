@@ -59,19 +59,20 @@ const arrivalTime = (f: any) =>
 // ================= LIVE CHECKS (same as before) =================
 
 // Decide if this flight needs a live check right now.
-// Budget: about 15 API calls per flight, to stay inside the free 400 a month.
+// Budget: about 18 API calls per flight, to stay inside the free 400 a month.
 function shouldCheck(f: any) {
   if (["Arrived", "Canceled", "Diverted"].includes(f.status)) return false;
   const toDeparture = minutesUntil(f.revisedDepartureUtc || f.departureUtc);
   const toArrival = minutesUntil(f.revisedArrivalUtc || f.predictedArrivalUtc || f.arrivalUtc);
 
-  // Watch from 1 hour before departure until 90 min after expected landing
-  if (toDeparture > 60 || toArrival < -90) return false;
+  // Watch from 3 hours before departure until 90 min after expected landing
+  if (toDeparture > 180 || toArrival < -90) return false;
 
   const sinceLastCheck = f.lastCheckedUtc ? -minutesUntil(f.lastCheckedUtc) : 9999;
   const nearDeparture = toDeparture <= 60 && toDeparture >= -30; // catch the gate departure
   const nearLanding = toArrival <= 20;                           // catch the landing
-  const interval = nearLanding ? 9 : nearDeparture ? 14 : 44;    // minutes between checks
+  // 3 hr to 1 hr before: every 45 min (catches early delays). Near takeoff: 15 min. Near landing: 10 min.
+  const interval = nearLanding ? 9 : nearDeparture ? 14 : 44;
   return sinceLastCheck >= interval;
 }
 

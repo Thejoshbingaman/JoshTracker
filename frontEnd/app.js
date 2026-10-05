@@ -61,21 +61,28 @@ function toAirportClock(utcTime, localString) {
   return new Date(new Date(utcTime).getTime() + offsetMinutes(localString) * 60000);
 }
 
-// "Sat, Oct 3 · 6:10 AM" in the airport's local time
-function formatAt(utcTime, localString, withDay = true) {
+// Every time on the page is shown in Eastern time (Arc's time zone)
+const TIME_ZONE = "America/New_York";
+
+// "Sat, Oct 3 · 6:10 AM" in Eastern time
+function formatAt(utcTime, _localString, withDay = true) {
   if (!utcTime) return "—";
-  const d = toAirportClock(utcTime, localString);
-  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+  const d = new Date(utcTime);
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE });
   if (!withDay) return time;
-  const day = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
-  return `${day} · ${time}`;
+  return `${formatDay(utcTime)} · ${time}`;
 }
 
-// "Sat, Oct 3" in the airport's local time
-function formatDay(utcTime, localString) {
+// "Sat, Oct 3" in Eastern time
+function formatDay(utcTime, _localString) {
   if (!utcTime) return "";
-  return toAirportClock(utcTime, localString)
-    .toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  return new Date(utcTime)
+    .toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: TIME_ZONE });
+}
+
+// "2026-10-03" in Eastern time (used to compare days)
+function dayKeyET(time) {
+  return new Date(time).toLocaleDateString("en-CA", { timeZone: TIME_ZONE });
 }
 
 // "2d 4h 12m", "1h 05m", or "12m 30s"
@@ -139,12 +146,11 @@ function delayMinutes(f) {
   return diff >= 5 ? Math.round(diff) : 0;
 }
 
-// Is the departure today or tomorrow, on the departure airport's clock?
+// Is the departure today or tomorrow, in Eastern time?
 function dayWord(f) {
-  const depDay = toAirportClock(departureTime(f), f.departureLocal).toISOString().slice(0, 10);
-  const today = toAirportClock(Date.now(), f.departureLocal);
-  const todayKey = today.toISOString().slice(0, 10);
-  const tomorrowKey = new Date(today.getTime() + 86400000).toISOString().slice(0, 10);
+  const depDay = dayKeyET(departureTime(f));
+  const todayKey = dayKeyET(Date.now());
+  const tomorrowKey = dayKeyET(Date.now() + 86400000);
   if (depDay === todayKey) return "today";
   if (depDay === tomorrowKey) return "tomorrow";
   return null;
@@ -336,7 +342,7 @@ function renderTimeline() {
   }
 
   // Day keys like "2026-10-03" on this phone's clock
-  const dayKey = (time) => new Date(time).toLocaleDateString("en-CA");
+  const dayKey = dayKeyET;
   const today = new Date();
   today.setHours(12, 0, 0, 0); // midday avoids daylight-saving edge cases
 
