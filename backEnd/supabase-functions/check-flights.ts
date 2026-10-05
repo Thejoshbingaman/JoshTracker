@@ -76,46 +76,74 @@ function shouldCheck(f: any) {
   return sinceLastCheck >= interval;
 }
 
+// Live data now comes from FlightAware AeroAPI (better delay data than AeroDataBox).
+const FA_BASE = "https://aeroapi.flightaware.com/aeroapi";
+
+async function fa(path: string) {
+  const res = await fetch(FA_BASE + path, {
+    headers: { "x-apikey": Deno.env.get("FLIGHTAWARE_API_KEY")! },
+  });
+  if (!res.ok) return { ok: false, status: res.status, data: null as any };
+  return { ok: true, status: res.status, data: await res.json() };
+}
+
+// Turn FlightAware's timeline into the simple status words the app already uses
+function statusFrom(fl: any) {
+  if (fl.cancelled) return "Canceled";
+  if (fl.diverted) return "Diverted";
+  if (fl.actual_on || fl.actual_in) return "Arrived";
+  if (fl.actual_off) return "EnRoute";
+  if (fl.actual_out) return "Departed";
+  if ((fl.departure_delay || 0) >= 900) return "Delayed";
+  return "Expected";
+}
+
 async function checkFlight(f: any) {
   const now = new Date().toISOString();
-  const res = await fetch(
-    `https://aerodatabox.p.rapidapi.com/flights/number/${f.flightNumber}/${f.date}?withLocation=true`,
-    {
-      headers: {
-        "X-RapidAPI-Key": Deno.env.get("AERODATABOX_API_KEY")!,
-        "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
-      },
-    }
-  );
-  const text = res.ok ? await res.text() : "";
-  const segments = text ? JSON.parse(text) : [];
-  const seg = segments.find((s: any) => s.departure.airport.iata === f.origin);
 
-  if (!seg) {
+  // 1 API call: this flight number around the scheduled day
+  const r = await fa(`/flights/${encodeURIComponent(f.flightNumber)}?ident_type=designator`);
+  const list = r.data?.flights || [];
+
+  // Pick the leg that leaves from our origin closest to the scheduled time
+  const sched = new Date(f.departureUtc).getTime();
+  const fl = list
+    .filter((x: any) => x.origin?.code_iata === f.origin && x.scheduled_out)
+    .sort((a: any, b: any) =>
+      Math.abs(new Date(a.scheduled_out).getTime() - sched) - Math.abs(new Date(b.scheduled_out).getTime() - sched))[0];
+
+  if (!fl || Math.abs(new Date(fl.scheduled_out).getTime() - sched) > 6 * 3600000) {
     await supabase.from("flights").update({ lastCheckedUtc: now }).eq("id", f.id);
-    return `${f.flightNumber}: no live data (HTTP ${res.status})`;
+    return `${f.flightNumber}: no FlightAware match (HTTP ${r.status})`;
   }
 
-  const { error } = await supabase.from("flights").update({
-    status: seg.status,
+  const update: any = {
+    status: statusFrom(fl),
     lastCheckedUtc: now,
-    revisedDepartureUtc: seg.departure.revisedTime?.utc || null,
-    actualDepartureUtc: seg.departure.runwayTime?.utc || null,
-    predictedArrivalUtc: seg.arrival.predictedTime?.utc || null,
-    predictedArrivalLocal: seg.arrival.predictedTime?.local || null,
-    revisedArrivalUtc: seg.arrival.revisedTime?.utc || null,
-    actualArrivalUtc: seg.arrival.runwayTime?.utc || null,
-    departureGate: seg.departure.gate || null,
-    arrivalGate: seg.arrival.gate || null,
-    baggageBelt: seg.arrival.baggageBelt || null,
-    lat: seg.location?.lat ?? null,
-    lon: seg.location?.lon ?? null,
-    altitudeFt: seg.location?.pressureAltitude?.feet ?? null,
-    heading: seg.location?.trueTrack?.deg ?? null,
-  }).eq("id", f.id);
+    revisedDepartureUtc: fl.estimated_out || null,   // gate departure estimate (shows delays)
+    actualDepartureUtc: fl.actual_out || null,       // left the gate
+    revisedArrivalUtc: fl.estimated_on || null,      // landing estimate
+    predictedArrivalUtc: fl.estimated_on || null,
+    actualArrivalUtc: fl.actual_on || null,          // touchdown
+    baggageBelt: fl.baggage_claim || null,
+  };
 
+  // 1 more API call, only while the plane is airborne: live position for the map
+  if (fl.actual_off && !fl.actual_on && fl.fa_flight_id) {
+    const pos = await fa(`/flights/${encodeURIComponent(fl.fa_flight_id)}/position`);
+    const p = pos.data?.last_position || pos.data;
+    if (p?.latitude != null) {
+      update.lat = p.latitude;
+      update.lon = p.longitude;
+      update.heading = p.heading ?? null;
+      update.altitudeFt = p.altitude != null ? p.altitude * 100 : null; // FlightAware gives hundreds of feet
+    }
+  }
+
+  const { error } = await supabase.from("flights").update(update).eq("id", f.id);
   if (error) return `${f.flightNumber}: database error: ${error.message}`;
-  return `${f.flightNumber}: ${seg.status}`;
+  const delay = Math.round((fl.departure_delay || 0) / 60);
+  return `${f.flightNumber}: ${update.status}${delay > 0 ? ` (+${delay} min)` : ""}`;
 }
 
 // ================= ALERTS =================
@@ -245,7 +273,11 @@ Deno.serve(async (req) => {
     const { data: before, error } = await supabase.from("flights").select("*");
     if (error) throw error;
     const results: string[] = [];
-    for (const f of (before || []).filter(shouldCheck)) {
+    // {"force": true} = check every flight in the next 2 days right now (for testing)
+    const due = body.force
+      ? (before || []).filter((f: any) => minutesUntil(f.departureUtc) < 2880 && minutesUntil(f.arrivalUtc) > -90)
+      : (before || []).filter(shouldCheck);
+    for (const f of due) {
       results.push(await checkFlight(f));
     }
 
