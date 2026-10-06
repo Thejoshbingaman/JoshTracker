@@ -638,17 +638,21 @@ function heartBurst(button) {
   }
 }
 
-// Hug: a warm ring spreads out and the page gives a little squeeze
-function hugEffect(button) {
-  const box = button.getBoundingClientRect();
-  const ring = document.createElement("span");
-  ring.className = "hug-ring";
-  ring.style.left = `${box.left + box.width / 2}px`;
-  ring.style.top = `${box.top + box.height / 2 + window.scrollY}px`;
-  document.body.appendChild(ring);
-  setTimeout(() => ring.remove(), 1200);
+// Hug: two glowing arms sweep in from the sides, wrap around a heart, squeeze, and fade
+function hugEffect() {
+  const overlay = document.createElement("div");
+  overlay.className = "hug-overlay";
+  overlay.innerHTML = `
+    <div class="hug-glow"></div>
+    <div class="hug-arm left"></div>
+    <div class="hug-arm right"></div>
+    <div class="hug-heart">♥</div>
+    <div class="hug-word">Hug</div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => overlay.remove(), 1900);
   document.body.classList.add("squeeze");
-  setTimeout(() => document.body.classList.remove("squeeze"), 600);
+  setTimeout(() => document.body.classList.remove("squeeze"), 1300);
+  if (navigator.vibrate) navigator.vibrate([40, 80, 40]);
 }
 
 // Punch: the screen shakes and a "POW!" pops out
