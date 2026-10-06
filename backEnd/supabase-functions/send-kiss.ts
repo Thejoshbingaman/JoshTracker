@@ -28,7 +28,18 @@ Deno.serve(async (req) => {
     if (!user) {
       return Response.json({ ok: false, error: "Not signed in" }, { status: 401, headers: cors });
     }
-    const name = user.user_metadata?.name || "someone special";
+    const name = user.user_metadata?.name || "Someone special";
+
+    // Which button: kiss, hug or punch (old app versions send nothing = kiss)
+    let body: any = {};
+    try { body = await req.json(); } catch { /* no body */ }
+    const MESSAGES: Record<string, { title: string; body: string }> = {
+      kiss: { title: `${name} sent you a kiss ♥`, body: "Mwah." },
+      hug: { title: `${name} sent you a hug`, body: "A long one. Squeeze back?" },
+      punch: { title: `${name} punched you`, body: "Right in the arm. You probably deserved it." },
+    };
+    const type = MESSAGES[body.type] ? body.type : "kiss";
+    const msg = MESSAGES[type];
 
     // 2. Send to everyone else's phones
     let { data: subs } = await admin.from("push_subscriptions").select("*").neq("user_id", user.id);
@@ -47,9 +58,9 @@ Deno.serve(async (req) => {
         await webpush.sendNotification(
           { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
           JSON.stringify({
-            title: "You got a kiss ♥",
-            body: testMode ? `From ${name} (test: only you have alerts on)` : `From ${name}`,
-            tag: "kiss",
+            title: msg.title,
+            body: testMode ? `${msg.body} (test: only you have alerts on)` : msg.body,
+            tag: `ping-${type}-${Date.now()}`, // unique, so several in a row all show
           })
         );
         sent++;

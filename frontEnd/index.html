@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>JoshTracker</title>
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#0b0d14">
+  <meta name="theme-color" content="#1a1c1f">
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="JoshTracker">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -66,11 +66,15 @@
       <!-- "Home in ..." countdown -->
       <div id="home-card"></div>
 
-      <!-- Send a kiss -->
-      <button id="kiss-button" class="kiss" type="button">
-        <span class="kiss-heart" aria-hidden="true">♥</span>
-        <span id="kiss-label">Send a kiss</span>
-      </button>
+      <!-- Kiss / Hug / Punch -->
+      <div class="pings-wrap">
+        <div class="pings">
+          <button type="button" class="ping ping-kiss" data-type="kiss"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 5 6.4 5c2 0 3.6 1.1 4.6 2.6C12 6.1 13.6 5 15.6 5 19 5 21.1 8.5 19.6 11.8 17.5 16.4 12 21 12 21z"/></svg><span>Kiss</span></button>
+          <button type="button" class="ping ping-hug" data-type="hug"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 14.5s-3.6-2.2-4.6-4.4C6.7 8.5 7.7 6.8 9.3 6.8c1.1 0 1.9.6 2.7 1.5.8-.9 1.6-1.5 2.7-1.5 1.6 0 2.6 1.7 1.9 3.3-1 2.2-4.6 4.4-4.6 4.4z" fill="currentColor"/><path d="M3 10c0 5.5 4 9.5 9 9.5s9-4 9-9.5"/><path d="M3 10l2-2M21 10l-2-2"/></svg><span>Hug</span></button>
+          <button type="button" class="ping ping-punch" data-type="punch"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11V7.5a1.5 1.5 0 0 1 3 0V10"/><path d="M10 9.5V6.5a1.5 1.5 0 0 1 3 0V10"/><path d="M13 9.5V7a1.5 1.5 0 0 1 3 0v3"/><path d="M16 9.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1a6 6 0 0 1-6-6v-2a2 2 0 0 1 2-2h3a2 2 0 0 1 0 4H8"/></svg><span>Punch</span></button>
+        </div>
+        <p id="ping-status" class="ping-status" aria-live="polite"></p>
+      </div>
 
       <!-- Next 7 days timeline -->
       <h2 id="timeline-title" class="section-title hidden">Next 7 days</h2>
@@ -129,8 +133,8 @@
       <section class="step hidden" data-step="3">
         <span class="welcome-heart" aria-hidden="true">♥</span>
         <p class="kicker">One more thing</p>
-        <h2>Send me a kiss</h2>
-        <p class="welcome-message">Tap the pink button any time and my phone buzzes, wherever I am. I'll send them back.</p>
+        <h2>Kiss, hug, or punch me</h2>
+        <p class="welcome-message">Tap a button any time and my phone buzzes, wherever I am. A kiss, a hug, or a punch for when I deserve it. I'll send them back.</p>
       </section>
 
       <div class="welcome-nav">

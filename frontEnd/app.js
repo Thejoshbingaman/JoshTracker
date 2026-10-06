@@ -479,8 +479,8 @@ function renderMap(hero) {
   } else {
     flown = []; toGo = fullPath;
   }
-  if (toGo.length) L.polyline(toGo, { color: "#ffffff", opacity: 0.3, weight: 2, dashArray: "4 6" }).addTo(mapLayers);
-  if (flown.length) L.polyline(flown, { color: "#a78bfa", weight: 3 }).addTo(mapLayers);
+  if (toGo.length) L.polyline(toGo, { color: "#8a939c", opacity: 0.6, weight: 2, dashArray: "3 6" }).addTo(mapLayers);
+  if (flown.length) L.polyline(flown, { color: "#e6ebef", weight: 2.5 }).addTo(mapLayers);
 
   // Airports
   L.marker(from, { icon: airportIcon(hero.origin), interactive: false }).addTo(mapLayers);
@@ -616,19 +616,20 @@ alertsButton.addEventListener("click", async () => {
   }
 });
 
-// ---------- SEND A KISS ----------
+// ---------- KISS / HUG / PUNCH ----------
 
-const kissButton = document.getElementById("kiss-button");
-const kissLabel = document.getElementById("kiss-label");
+const pingButtons = [...document.querySelectorAll(".ping")];
+const pingStatus = document.getElementById("ping-status");
+const PING_DONE = { kiss: "Kiss sent ♥", hug: "Hug sent", punch: "Punch landed. Ouch." };
 
-// Little hearts that float up from the button
-function heartBurst() {
-  const box = kissButton.getBoundingClientRect();
+// Kiss: little hearts float up from the button
+function heartBurst(button) {
+  const box = button.getBoundingClientRect();
   for (let i = 0; i < 12; i++) {
     const h = document.createElement("span");
     h.className = "float-heart";
     h.textContent = "♥";
-    h.style.left = `${box.left + box.width / 2 + (Math.random() - 0.5) * box.width * 0.8}px`;
+    h.style.left = `${box.left + box.width / 2 + (Math.random() - 0.5) * box.width}px`;
     h.style.top = `${box.top + window.scrollY}px`;
     h.style.animationDelay = `${Math.random() * 0.3}s`;
     h.style.fontSize = `${14 + Math.random() * 16}px`;
@@ -637,27 +638,60 @@ function heartBurst() {
   }
 }
 
-kissButton.addEventListener("click", async () => {
-  if (kissButton.disabled) return;
-  kissButton.disabled = true;
-  heartBurst();
-  kissLabel.textContent = "Sending...";
+// Hug: a warm ring spreads out and the page gives a little squeeze
+function hugEffect(button) {
+  const box = button.getBoundingClientRect();
+  const ring = document.createElement("span");
+  ring.className = "hug-ring";
+  ring.style.left = `${box.left + box.width / 2}px`;
+  ring.style.top = `${box.top + box.height / 2 + window.scrollY}px`;
+  document.body.appendChild(ring);
+  setTimeout(() => ring.remove(), 1200);
+  document.body.classList.add("squeeze");
+  setTimeout(() => document.body.classList.remove("squeeze"), 600);
+}
 
-  const { data, error } = await supabase.functions.invoke("send-kiss");
+// Punch: the screen shakes and a "POW!" pops out
+function punchEffect(button) {
+  const box = button.getBoundingClientRect();
+  const pow = document.createElement("span");
+  pow.className = "pow";
+  pow.textContent = "POW!";
+  pow.style.left = `${box.left + box.width / 2}px`;
+  pow.style.top = `${box.top + window.scrollY - 10}px`;
+  document.body.appendChild(pow);
+  setTimeout(() => pow.remove(), 1000);
+  document.body.classList.add("shake");
+  setTimeout(() => document.body.classList.remove("shake"), 450);
+  if (navigator.vibrate) navigator.vibrate(60);
+}
 
-  if (error || !data?.ok) {
-    kissLabel.textContent = "Didn't send. Try again";
-  } else if (data.sent === 0) {
-    kissLabel.textContent = "Sent, but no phones have alerts on";
-  } else {
-    kissLabel.textContent = "Kiss sent ♥";
-  }
+const PING_EFFECT = { kiss: heartBurst, hug: hugEffect, punch: punchEffect };
 
-  // Short cooldown so it can't be spammed by accident
-  setTimeout(() => {
-    kissLabel.textContent = "Send a kiss";
-    kissButton.disabled = false;
-  }, 4000);
+pingButtons.forEach((button) => {
+  button.addEventListener("click", async () => {
+    if (button.disabled) return;
+    const type = button.dataset.type;
+    button.disabled = true;
+    PING_EFFECT[type](button);
+    pingStatus.textContent = "Sending...";
+
+    const { data, error } = await supabase.functions.invoke("send-kiss", { body: { type } });
+
+    if (error || !data?.ok) {
+      pingStatus.textContent = "Didn't send. Try again.";
+    } else if (data.sent === 0) {
+      pingStatus.textContent = "Sent, but no phones have alerts on.";
+    } else {
+      pingStatus.textContent = PING_DONE[type];
+    }
+
+    // Short cooldown so a button can't be spammed by accident
+    setTimeout(() => {
+      button.disabled = false;
+      pingStatus.textContent = "";
+    }, 3000);
+  });
 });
 
 // ---------- WELCOME NOTE ----------
