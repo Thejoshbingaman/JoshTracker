@@ -618,7 +618,7 @@ function renderVisit() {
       <article class="strip visit empty">
         <span class="strip-icon">${ICON.calendar}</span>
         <div class="strip-main">
-          <span class="strip-label">Next time together</span>
+          <span class="strip-label">Next date</span>
           <span class="strip-note">Plan a date and count down to it</span>
         </div>
         <button type="button" class="chip-button" data-visit-edit>Set</button>
@@ -645,7 +645,7 @@ function openVisitEditor() {
   const el = document.getElementById("visit-card");
   el.innerHTML = `
     <form class="strip visit editing" id="visit-form">
-      <span class="strip-label">Next time together</span>
+      <span class="strip-label">Next date</span>
       <label class="field"><span>What</span>
         <input id="visit-title" type="text" maxlength="60" placeholder="Dinner date, weekend away…" value="${escapeHtml(visit?.title || "")}">
       </label>
@@ -697,7 +697,7 @@ async function loadScores() {
   const people = {};
   for (const name of ["Arc", "Josh"]) people[name] = { kiss: 0, hug: 0, punch: 0 };
   for (const row of data || []) {
-    const name = row.sender_name || "Someone";
+    const name = (row.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
     people[name] = people[name] || { kiss: 0, hug: 0, punch: 0 };
     if (people[name][row.type] !== undefined) people[name][row.type]++;
   }

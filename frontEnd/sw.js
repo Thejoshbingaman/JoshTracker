@@ -42,9 +42,12 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title || "JoshTracker", {
       body: data.body || "",
-      icon: "icon-192.png",
-      badge: "badge-96.png",
-      tag: data.tag,          // same tag = replaces the older alert
+      icon: "icon-192.png?v=2",       // the app icon beside the alert (Android)
+      badge: "badge-96.png?v=2",      // the small white plane in the status bar (Android)
+      tag: data.tag,                  // same tag = replaces the older alert
+      renotify: Boolean(data.tag),    // a replaced alert still buzzes
+      vibrate: [80, 60, 80],
+      timestamp: Date.now(),
       data: { url: data.url || "./" },
     })
   );
@@ -53,12 +56,13 @@ self.addEventListener("push", (event) => {
 // Tapping the alert opens (or focuses) the app
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const target = new URL(event.notification.data?.url || "./", self.registration.scope).href;
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
       for (const w of windows) {
-        if ("focus" in w) return w.focus();
+        if (w.url.startsWith(self.registration.scope) && "focus" in w) return w.focus();
       }
-      return self.clients.openWindow(event.notification.data?.url || "./");
+      return self.clients.openWindow(target);
     })
   );
 });
