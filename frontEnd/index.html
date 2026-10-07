@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>JoshTracker</title>
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#1a1c1f">
+  <meta name="theme-color" content="#0b0b0d">
   <link rel="icon" href="icon-192.png">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="JoshTracker">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@300;400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -35,8 +35,11 @@
     <!-- DASHBOARD: shown when signed in -->
     <section id="dashboard-view" class="hidden">
       <header class="topbar">
-        <span class="brand">JoshTracker</span>
-        <span class="live"><span class="live-dot"></span>LIVE</span>
+        <div class="me">
+          <span id="me-avatar" class="avatar" aria-hidden="true"></span>
+          <span id="me-hi" class="hi"></span>
+        </div>
+        <span class="live"><span class="live-dot"></span>Live</span>
       </header>
 
       <!-- "Turn on alerts" card (hides itself once alerts are on) -->
@@ -48,44 +51,72 @@
         <button id="alerts-button" class="small">Turn on</button>
       </div>
 
-      <!-- Big status line at the top ("Josh is flying to Los Angeles") -->
+      <!-- Where Josh is right now -->
       <div class="headline">
         <p id="headline-kicker" class="kicker"></p>
         <h1 id="headline-title"></h1>
         <p id="headline-sub" class="headline-sub"></p>
       </div>
 
-      <!-- The main flight card -->
-      <div id="hero"></div>
+      <!-- Big ticking clock -->
+      <div id="clock" class="clock hidden">
+        <div id="clock-time" class="clock-time"></div>
+        <div id="clock-caption" class="clock-caption"></div>
+      </div>
 
-      <!-- Map of the current flight -->
-      <div id="map-card" class="card map-card hidden">
-        <div id="map"></div>
+      <!-- Miles apart -->
+      <p id="distance" class="distance hidden"></p>
+
+      <!-- Flight card: map on top, details below -->
+      <div id="flight-card" class="flight-card hidden">
+        <div id="map-card" class="map-wrap">
+          <div id="map"></div>
+          <span id="delay-chip" class="delay-chip hidden"></span>
+        </div>
+        <div id="hero"></div>
       </div>
 
       <!-- "Home in ..." countdown -->
       <div id="home-card"></div>
 
+      <!-- Next time together -->
+      <div id="visit-card"></div>
+
       <!-- Kiss / Hug / Punch -->
       <div class="pings-wrap">
+        <p id="ping-title" class="section-title">Send something</p>
         <div class="pings">
-          <button type="button" class="ping ping-kiss" data-type="kiss"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 5 6.4 5c2 0 3.6 1.1 4.6 2.6C12 6.1 13.6 5 15.6 5 19 5 21.1 8.5 19.6 11.8 17.5 16.4 12 21 12 21z"/></svg><span>Kiss</span></button>
-          <button type="button" class="ping ping-hug" data-type="hug"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 14.5s-3.6-2.2-4.6-4.4C6.7 8.5 7.7 6.8 9.3 6.8c1.1 0 1.9.6 2.7 1.5.8-.9 1.6-1.5 2.7-1.5 1.6 0 2.6 1.7 1.9 3.3-1 2.2-4.6 4.4-4.6 4.4z" fill="currentColor"/><path d="M3 10c0 5.5 4 9.5 9 9.5s9-4 9-9.5"/><path d="M3 10l2-2M21 10l-2-2"/></svg><span>Hug</span></button>
-          <button type="button" class="ping ping-punch" data-type="punch"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11V7.5a1.5 1.5 0 0 1 3 0V10"/><path d="M10 9.5V6.5a1.5 1.5 0 0 1 3 0V10"/><path d="M13 9.5V7a1.5 1.5 0 0 1 3 0v3"/><path d="M16 9.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1a6 6 0 0 1-6-6v-2a2 2 0 0 1 2-2h3a2 2 0 0 1 0 4H8"/></svg><span>Punch</span></button>
+          <button type="button" class="ping ping-kiss" data-type="kiss"><span class="ping-orb"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#ff6f91" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 5 6.4 5c2 0 3.6 1.1 4.6 2.6C12 6.1 13.6 5 15.6 5 19 5 21.1 8.5 19.6 11.8 17.5 16.4 12 21 12 21z"/></svg></span><span class="ping-label">Kiss</span></button>
+          <button type="button" class="ping ping-hug" data-type="hug"><span class="ping-orb"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="10.5" r="8" fill="#ffb547"/><path d="M8.2 8.6q1.1-1.2 2.2 0M13.6 8.6q1.1-1.2 2.2 0" fill="none" stroke="#3a2205" stroke-width="1.4" stroke-linecap="round"/><path d="M9 12.2q3 2.6 6 0" fill="none" stroke="#3a2205" stroke-width="1.4" stroke-linecap="round"/><ellipse cx="6.3" cy="17.4" rx="3.3" ry="2.6" transform="rotate(-25 6.3 17.4)" fill="#ffd27a" stroke="#1b1b1f" stroke-width="1"/><ellipse cx="17.7" cy="17.4" rx="3.3" ry="2.6" transform="rotate(25 17.7 17.4)" fill="#ffd27a" stroke="#1b1b1f" stroke-width="1"/></svg></span><span class="ping-label">Hug</span></button>
+          <button type="button" class="ping ping-punch" data-type="punch"><span class="ping-orb"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2.5h6.5a5.5 5.5 0 0 1 5.5 5.5v3.5a5.5 5.5 0 0 1-5.5 5.5H8.5A4.5 4.5 0 0 1 4 12.5V6.5a4 4 0 0 1 4-4z" fill="#ff4545"/><path d="M4.4 11.2h4.4a2.3 2.3 0 0 0 2.3-2.3V8" fill="none" stroke="#6e1015" stroke-width="1.4" stroke-linecap="round"/><path d="M14 5.2a3 3 0 0 1 3 2.6" fill="none" stroke="#ffb0b0" stroke-width="1.2" stroke-linecap="round" opacity="0.8"/><rect x="6.5" y="17.6" width="10.5" height="4" rx="1.3" fill="#ffb0b0"/><path d="M8.8 19.6h6" stroke="#ff4545" stroke-width="1" stroke-linecap="round"/></svg></span><span class="ping-label">Punch</span></button>
         </div>
         <p id="ping-status" class="ping-status" aria-live="polite"></p>
       </div>
 
+      <!-- This week's scoreboard -->
+      <div id="score-card" class="card score hidden"></div>
+
       <!-- Next 7 days timeline -->
-      <h2 id="timeline-title" class="section-title hidden">Next 7 days</h2>
+      <h2 id="timeline-title" class="section-title hidden">This week</h2>
       <div id="timeline" class="card timeline hidden"></div>
 
-      <p class="footnote">All times are Eastern (ET).</p>
+      <p class="footnote">All times are Eastern</p>
       <p class="legal"><button type="button" id="open-welcome" class="link-button">♥ Read Josh's note again</button></p>
       <p class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <button type="button" id="logout" class="link-button">Sign out</button></p>
     </section>
 
   </main>
+
+  <!-- CELEBRATION: shown once when Josh lands back home -->
+  <div id="celebrate" class="celebrate hidden" role="dialog" aria-modal="true" aria-labelledby="celebrate-title">
+    <div id="confetti" class="confetti" aria-hidden="true"></div>
+    <div class="celebrate-inner">
+      <svg class="celebrate-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 11l9-7 9 7M5 10v10h14V10"/></svg>
+      <h1 id="celebrate-title">Josh is home!</h1>
+      <p id="celebrate-sub" class="celebrate-sub"></p>
+      <button type="button" id="celebrate-close">Yay ♥</button>
+    </div>
+  </div>
 
   <!-- WELCOME: shown once on her first sign-in (and any time from the footer link) -->
   <div id="welcome" class="welcome hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
@@ -109,7 +140,7 @@
           <li><span class="tour-icon">⏱</span><div><strong>The flight card</strong><span>Counts down to takeoff and landing, and shows any delays.</span></div></li>
           <li><span class="tour-icon">◎</span><div><strong>The map</strong><span>Shows my plane moving across the country while I fly.</span></div></li>
           <li><span class="tour-icon">♥</span><div><strong>Home in</strong><span>Counts down to the minute I land back home.</span></div></li>
-          <li><span class="tour-icon">▦</span><div><strong>Next 7 days</strong><span>My whole week at a glance.</span></div></li>
+          <li><span class="tour-icon">▦</span><div><strong>This week</strong><span>My whole week at a glance, plus a countdown to our next date.</span></div></li>
         </ul>
         <p class="welcome-small">It updates by itself. My flights come straight from my calendar, so you never have to ask.</p>
       </section>
@@ -121,8 +152,7 @@
         <ul class="alert-list">
           <li><strong>The night before</strong> I fly</li>
           <li><strong>If I'm delayed</strong> 15 minutes or more</li>
-          <li><strong>When I take off</strong></li>
-          <li><strong>10 minutes before</strong> I land</li>
+                    <li><strong>When I board</strong>, and when I leave the gate</li>
           <li><strong>When I land</strong>, and when I'm home</li>
         </ul>
         <div id="welcome-alerts" class="welcome-alerts"></div>

@@ -41,6 +41,9 @@ Deno.serve(async (req) => {
     const type = MESSAGES[body.type] ? body.type : "kiss";
     const msg = MESSAGES[type];
 
+    // Count it on the scoreboard
+    await admin.from("pings").insert({ sender_id: user.id, sender_name: name, type });
+
     // 2. Send to everyone else's phones
     let { data: subs } = await admin.from("push_subscriptions").select("*").neq("user_id", user.id);
     let testMode = false;

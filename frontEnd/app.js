@@ -169,9 +169,24 @@ function pickHero(list) {
 
 // ---------- DRAWING THE PAGE ----------
 
+// Small inline icons (no emoji)
+const ICON = {
+  plane: (deg = 0) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" transform="rotate(${deg} 12 12)" d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`,
+  home: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 11l9-7 9 7M5 10v10h14V10"/></svg>`,
+  pin: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></svg>`,
+  calendar: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 10h16M8 3v4M16 3v4"/></svg>`,
+};
+
+// The flight he's heading home on (from the featured one onward)
+function homeFlightFrom(hero) {
+  if (!hero) return null;
+  return flights.slice(flights.indexOf(hero)).find(
+    (f) => HOME_AIRPORTS.includes(f.destination) && ["upcoming", "air"].includes(phaseOf(f))
+  ) || null;
+}
+
 function renderHeadline(hero) {
   let kicker = "", title = "", sub = "";
-  const now = Date.now();
 
   if (!hero) {
     const last = flights[flights.length - 1];
@@ -189,11 +204,10 @@ function renderHeadline(hero) {
     if (phase === "air") {
       kicker = "In the air";
       title = `Josh is flying to ${dest}`;
-      sub = `Lands in ${formatDuration(new Date(arrivalTime(hero)) - now)}`;
     } else if (phase === "landed") {
       kicker = "Just landed";
-      title = `Josh landed in ${dest}`;
-      sub = `at ${formatAt(arrivalTime(hero), hero.arrivalLocal, false)}`;
+      title = HOME_AIRPORTS.includes(hero.destination) ? "Josh is home" : `Josh landed in ${dest}`;
+      sub = `Landed at ${formatAt(arrivalTime(hero), hero.arrivalLocal, false)}`;
     } else if (phase === "canceled") {
       kicker = "Heads up";
       title = `Flight ${hero.flightNumber} was canceled`;
@@ -206,13 +220,75 @@ function renderHeadline(hero) {
       const word = dayWord(hero);
       kicker = word ? `Flying ${word}` : "Next flight";
       title = HOME_AIRPORTS.includes(hero.origin) ? "Josh is home" : `Josh is in ${city(hero.origin)}`;
-      sub = `Flies to ${dest} in ${formatDuration(new Date(departureTime(hero)) - now)}`;
     }
   }
 
   document.getElementById("headline-kicker").textContent = kicker;
   document.getElementById("headline-title").textContent = title;
-  document.getElementById("headline-sub").textContent = sub;
+  const subEl = document.getElementById("headline-sub");
+  subEl.textContent = sub;
+  subEl.classList.toggle("hidden", !sub);
+}
+
+// Big ticking clock: time until takeoff, or until landing
+function renderClock(hero) {
+  const box = document.getElementById("clock");
+  const phase = hero ? phaseOf(hero) : null;
+  if (phase !== "upcoming" && phase !== "air") { box.classList.add("hidden"); return; }
+
+  const now = Date.now();
+  const target = phase === "air" ? arrivalTime(hero) : departureTime(hero);
+  const text = formatDuration(new Date(target).getTime() - now);
+  // Seconds in a softer color
+  const cut = text.lastIndexOf(":");
+  document.getElementById("clock-time").innerHTML =
+    `${text.slice(0, cut)}<span class="clock-sec">${text.slice(cut)}</span>`;
+  document.getElementById("clock-caption").textContent = phase === "air"
+    ? `until he lands · ${formatAt(target, null, false)} your time`
+    : `until takeoff to ${city(hero.destination)} · ${formatAt(target, null, false)}`;
+  box.classList.remove("hidden");
+}
+
+// Miles between two [lat, lon] points
+function milesBetween(a, b) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(b[0] - a[0]), dLon = rad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[0])) * Math.cos(rad(b[0])) * Math.sin(dLon / 2) ** 2;
+  return 3958.8 * 2 * Math.asin(Math.sqrt(h));
+}
+
+// Where Josh is right now, as [lat, lon] (null if unknown)
+function joshPosition(hero) {
+  if (!hero || hero.originLat == null || hero.destinationLat == null) return null;
+  const phase = phaseOf(hero);
+  const from = [hero.originLat, hero.originLon];
+  const to = [hero.destinationLat, hero.destinationLon];
+  if (phase === "air") {
+    if (hero.lat != null && hero.lon != null) return [hero.lat, hero.lon];
+    const pts = greatCirclePoints(from, to, 64);
+    return pts[Math.round(progressOf(hero) * 64)];
+  }
+  if (phase === "landed") return to;
+  return from;
+}
+
+// Where home is: the home airport he's flying back to (Baltimore if unknown)
+const BWI = [39.1754, -76.6683];
+function homePoint(hero) {
+  const hf = homeFlightFrom(hero);
+  if (hf && hf.destinationLat != null) return [hf.destinationLat, hf.destinationLon];
+  if (hero && HOME_AIRPORTS.includes(hero.origin) && hero.originLat != null) return [hero.originLat, hero.originLon];
+  return BWI;
+}
+
+function renderDistance(hero) {
+  const el = document.getElementById("distance");
+  const pos = joshPosition(hero);
+  if (!pos) { el.classList.add("hidden"); return; }
+  const miles = Math.round(milesBetween(pos, homePoint(hero)));
+  if (miles < 30) { el.classList.add("hidden"); return; }
+  el.innerHTML = `${ICON.pin}<span><strong>${miles.toLocaleString("en-US")}</strong> miles apart</span>`;
+  el.classList.remove("hidden");
 }
 
 // Small line at the bottom of the card: how fresh is the data?
@@ -221,120 +297,89 @@ function updatedLine(f, phase) {
     return `<p class="updated"><span class="fresh-dot dot-idle"></span>Live tracking starts 3 hr before departure</p>`;
   }
   const mins = (Date.now() - new Date(f.lastCheckedUtc).getTime()) / 60000;
-  // During a flight, data older than 45 min means something may be stuck
   const stale = (phase === "air" || phase === "upcoming") && mins > 45;
   return `<p class="updated"><span class="fresh-dot ${stale ? "dot-stale" : "dot-fresh"}"></span>Live data · updated ${timeAgo(f.lastCheckedUtc)}</p>`;
 }
 
 function renderHero(hero) {
+  const card = document.getElementById("flight-card");
   const el = document.getElementById("hero");
-  if (!hero) { el.innerHTML = ""; return; }
+  if (!hero) { card.classList.add("hidden"); el.innerHTML = ""; return; }
+  card.classList.remove("hidden");
 
   const phase = phaseOf(hero);
-  const now = Date.now();
-  const dep = new Date(departureTime(hero)).getTime();
-  const arr = new Date(arrivalTime(hero)).getTime();
-
-  // How far along the route line the plane sits (0 to 100)
   const progress = progressOf(hero) * 100;
-
-  // Countdown text
-  let countLabel = "", countValue = "";
-  if (phase === "upcoming") { countLabel = "Departs in"; countValue = formatDuration(dep - now); }
-  if (phase === "air") { countLabel = "Lands in"; countValue = formatDuration(arr - now); }
-  if (phase === "landed") { countLabel = "Landed"; countValue = formatAt(arrivalTime(hero), hero.arrivalLocal, false); }
-
   const delay = delayMinutes(hero);
-  // The pill follows what the card shows, so it can't say "In the air" after landing
-  const statusText =
-    phase === "landed" ? "Landed" :
-    phase === "air" ? "In the air" :
-    STATUS_TEXT[hero.status] || hero.status || "Scheduled";
 
-  // Only show gate / baggage when we have them
-  const extras = [];
-  if (hero.baggageBelt) extras.push(`<div><span class="label">Baggage</span><span class="time">Belt ${hero.baggageBelt}</span></div>`);
+  // Delay / status tag over the map
+  const chip = document.getElementById("delay-chip");
+  const chipText =
+    phase === "canceled" ? "Canceled" :
+    phase === "diverted" ? "Diverted" :
+    delay && phase !== "landed" ? `Delayed ${delay} min` : "";
+  chip.textContent = chipText;
+  chip.classList.toggle("hidden", !chipText);
+
+  const mins = Math.round((new Date(arrivalTime(hero)) - new Date(departureTime(hero))) / 60000);
+  const duration = mins > 0 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : "";
+  const depLabel = phase === "upcoming" ? "Departs" : "Took off";
+  const arrLabel = phase === "landed" ? "Landed" : "Lands";
 
   el.innerHTML = `
-    <article class="card hero phase-${phase}">
-      <div class="hero-top">
-        <span class="flightno">${hero.flightNumber}</span>
-        <span class="pills">
-          ${delay ? `<span class="pill pill-warn">+${delay} min</span>` : ""}
-          <span class="pill pill-${phase}">${statusText}</span>
-        </span>
+    <div class="fc">
+      <div class="fc-route">
+        <div><div class="code">${hero.origin}</div><div class="city">${city(hero.origin)}</div></div>
+        <div class="fc-mid">${hero.flightNumber}${duration ? ` · ${duration}` : ""}</div>
+        <div class="right"><div class="code">${hero.destination}</div><div class="city">${city(hero.destination)}</div></div>
       </div>
 
-      <div class="route">
-        <div class="end">
-          <span class="code">${hero.origin}</span>
-          <span class="city">${city(hero.origin)}</span>
-        </div>
-        <div class="track">
-          <div class="track-fill" style="width:${progress}%"></div>
-          <div class="plane" style="left:${progress}%">${PLANE_SVG}</div>
-        </div>
-        <div class="end end-right">
-          <span class="code">${hero.destination}</span>
-          <span class="city">${city(hero.destination)}</span>
-        </div>
+      <div class="bar">
+        <div class="bar-fill" style="width:${progress}%"></div>
+        <div class="bar-dot" style="left:${progress}%"></div>
       </div>
 
-      ${countValue ? `
-      <div class="countdown">
-        <span class="label">${countLabel}</span>
-        <span class="big-time">${countValue}</span>
-      </div>` : ""}
-
-      <div class="grid">
+      <div class="fc-times">
         <div>
-          <span class="label">Departs</span>
-          <span class="time">${formatAt(departureTime(hero), hero.departureLocal, false)}</span>
-          <span class="day">${formatDay(departureTime(hero), hero.departureLocal)}</span>
-          ${delay ? `<span class="was">was ${formatAt(hero.departureUtc, hero.departureLocal, false)}</span>` : ""}
+          <div class="t-label">${depLabel}</div>
+          <div class="t-val">${formatAt(departureTime(hero), null, false)}</div>
+          ${delay ? `<div class="t-sub was">${formatAt(hero.departureUtc, null, false)}</div>` : `<div class="t-sub">${formatDay(departureTime(hero))}</div>`}
         </div>
-        <div>
-          <span class="label">Arrives</span>
-          <span class="time">${formatAt(arrivalTime(hero), hero.arrivalLocal, false)}</span>
-          <span class="day">${formatDay(arrivalTime(hero), hero.arrivalLocal)}</span>
+        <div class="right">
+          <div class="t-label">${arrLabel}</div>
+          <div class="t-val">${formatAt(arrivalTime(hero), null, false)}</div>
+          <div class="t-sub">${hero.baggageBelt ? `Bags: belt ${hero.baggageBelt}` : formatDay(arrivalTime(hero))}</div>
         </div>
-        ${extras.join("")}
       </div>
 
       ${updatedLine(hero, phase)}
-    </article>
+    </div>
   `;
 }
 
 function renderHomeCard(hero) {
   const el = document.getElementById("home-card");
-  if (!hero) { el.innerHTML = ""; return; }
+  const hf = homeFlightFrom(hero);
+  if (!hf) { el.innerHTML = ""; return; }
 
-  // First unfinished flight (from the featured one on) that ends at a home airport
-  const start = flights.indexOf(hero);
-  const homeFlight = flights.slice(start).find(
-    (f) => HOME_AIRPORTS.includes(f.destination) && ["upcoming", "air"].includes(phaseOf(f))
-  );
-  if (!homeFlight) { el.innerHTML = ""; return; }
-
+  const at = arrivalTime(hf);
+  const day = new Date(at).toLocaleDateString("en-US", { weekday: "short", timeZone: TIME_ZONE });
   el.innerHTML = `
-    <article class="card home">
-      <div>
-        <span class="label">Home in</span>
-        <span class="big-time">${formatDuration(new Date(arrivalTime(homeFlight)) - Date.now())}</span>
-        <span class="home-sub">Lands at ${homeFlight.destination} · ${formatAt(arrivalTime(homeFlight), homeFlight.arrivalLocal)}</span>
+    <article class="strip home">
+      <span class="strip-icon">${ICON.home}</span>
+      <div class="strip-main">
+        <span class="strip-label">Home in</span>
+        <span class="strip-time">${formatDuration(new Date(at) - Date.now())}</span>
       </div>
-      <span class="heart" aria-hidden="true">♥</span>
+      <span class="strip-side">${day}<br>${formatAt(at, null, false)}</span>
     </article>
   `;
 }
 
-// "Next 7 days": where Josh is each day, and any flights
+// "This week": where Josh is each day, and any flights
 function renderTimeline() {
   const el = document.getElementById("timeline");
   const title = document.getElementById("timeline-title");
 
-  // Only flights that are not finished
   const active = flights.filter((f) => phaseOf(f) !== "landed" && phaseOf(f) !== "canceled");
   if (active.length === 0) {
     el.classList.add("hidden");
@@ -342,51 +387,53 @@ function renderTimeline() {
     return;
   }
 
-  // Day keys like "2026-10-03" on this phone's clock
-  const dayKey = dayKeyET;
   const today = new Date();
   today.setHours(12, 0, 0, 0); // midday avoids daylight-saving edge cases
 
-  // Where is he before the first flight? At that flight's origin.
   let where = active[0].origin;
   const rows = [];
 
   for (let i = 0; i < 7; i++) {
     const day = new Date(today.getTime() + i * 86400000);
-    const key = dayKey(day);
-    const todays = active.filter((f) => dayKey(departureTime(f)) === key);
+    const key = dayKeyET(day);
+    const todays = active.filter((f) => dayKeyET(departureTime(f)) === key);
 
-    const dow = i === 0 ? "Today" : i === 1 ? "Tomorrow" : day.toLocaleDateString("en-US", { weekday: "short" });
-    const date = day.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const dow = i === 0 ? "Today" : day.toLocaleDateString("en-US", { weekday: "short", timeZone: TIME_ZONE });
+    const num = day.toLocaleDateString("en-US", { day: "numeric", timeZone: TIME_ZONE });
 
-    let kind, body;
+    let body, icon = "";
     if (todays.length > 0) {
-      kind = "fly";
       body = todays.map((f) => `
         <div class="tl-flight">
-          <span class="tl-route">${f.origin} <span class="arrow">→</span> ${f.destination}</span>
-          <span class="tl-time">${formatAt(departureTime(f), f.departureLocal, false)} · ${f.flightNumber}</span>
+          <span class="tl-route">${f.origin} → ${f.destination}</span>
+          <span class="tl-time">${formatAt(departureTime(f), null, false)} · ${f.flightNumber}</span>
         </div>`).join("");
-      where = todays[todays.length - 1].destination; // he ends the day here
+      icon = `<span class="tl-icon fly">${ICON.plane(f0dir(todays[0]))}</span>`;
+      where = todays[todays.length - 1].destination;
     } else if (HOME_AIRPORTS.includes(where)) {
-      kind = "home";
-      body = `<span class="tl-where">Home</span>`;
+      body = `<span class="tl-where home">Home</span>`;
+      icon = `<span class="tl-icon">${ICON.home}</span>`;
     } else {
-      kind = "away";
       body = `<span class="tl-where">In ${city(where)}</span>`;
     }
 
     rows.push(`
       <div class="tl-row${i === 0 ? " tl-today" : ""}">
-        <div class="tl-day"><span class="tl-dow">${dow}</span><span class="tl-date">${date}</span></div>
-        <div class="tl-dot tl-${kind}"></div>
+        <div class="tl-day"><span class="tl-dow">${dow}</span><span class="tl-num">${num}</span></div>
         <div class="tl-body">${body}</div>
+        ${icon}
       </div>`);
   }
 
   el.innerHTML = rows.join("");
   el.classList.remove("hidden");
   title.classList.remove("hidden");
+}
+
+// Plane icon direction for the week list: east-bound points right, west-bound points left
+function f0dir(f) {
+  if (f.originLon != null && f.destinationLon != null) return f.destinationLon >= f.originLon ? 90 : -90;
+  return 90;
 }
 
 // ---------- MAP ----------
@@ -480,8 +527,8 @@ function renderMap(hero) {
   } else {
     flown = []; toGo = fullPath;
   }
-  if (toGo.length) L.polyline(toGo, { color: "#4a525a", opacity: 1, weight: 2, dashArray: "3 6" }).addTo(mapLayers);
-  if (flown.length) L.polyline(flown, { color: "#e6ebef", weight: 2.5 }).addTo(mapLayers);
+  if (toGo.length) L.polyline(toGo, { color: "#ffffff", opacity: 0.25, weight: 2, dashArray: "2 6" }).addTo(mapLayers);
+  if (flown.length) L.polyline(flown, { color: "#ff4545", weight: 3 }).addTo(mapLayers);
 
   // Airports
   L.marker(from, { icon: airportIcon(hero.origin), interactive: false }).addTo(mapLayers);
@@ -507,9 +554,206 @@ function renderMap(hero) {
 function render() {
   const hero = pickHero(flights);
   renderHeadline(hero);
+  renderClock(hero);
+  renderDistance(hero);
   renderHero(hero);
   renderHomeCard(hero);
+  renderVisit();
   renderTimeline();
+}
+
+// ---------- WHO IS SIGNED IN ----------
+
+let myName = "";
+const otherName = () => (myName.toLowerCase() === "josh" ? "Arc" : "Josh");
+
+async function loadMe() {
+  const { data: { user } } = await supabase.auth.getUser();
+  myName = user?.user_metadata?.name || "";
+  document.getElementById("me-avatar").textContent = (myName || "?").slice(0, 1).toUpperCase();
+  document.getElementById("me-hi").textContent = myName ? `Hi, ${myName}` : "Hi";
+  document.getElementById("ping-title").textContent = `Send ${otherName()} something`;
+}
+
+// ---------- NEXT TIME TOGETHER ----------
+// One shared row in the next_visit table. Either of you can set it.
+
+let visit = null;        // { title, at }
+let editingVisit = false;
+
+async function loadVisit() {
+  const { data } = await supabase.from("next_visit").select("*").eq("id", 1).maybeSingle();
+  visit = data || null;
+  renderVisit();
+}
+
+// "2026-10-10T19:30" for the date picker, in this phone's time
+function toPickerValue(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+let visitKey = "";       // what's drawn now, so we only redraw when it changes
+
+function renderVisit() {
+  const el = document.getElementById("visit-card");
+  if (editingVisit) return; // don't wipe the form while typing
+
+  const upcoming = visit?.at && new Date(visit.at).getTime() > Date.now() - 6 * 3600000;
+  const key = upcoming ? `set|${visit.title}|${visit.at}` : "empty";
+
+  // Same card as before: just tick the clock (keeps buttons tappable)
+  if (key === visitKey && el.firstElementChild) {
+    if (upcoming) {
+      const left = new Date(visit.at).getTime() - Date.now();
+      el.querySelector(".strip-time").textContent = left > 0 ? formatDuration(left) : "Today!";
+    }
+    return;
+  }
+  visitKey = key;
+
+  if (!upcoming) {
+    el.innerHTML = `
+      <article class="strip visit empty">
+        <span class="strip-icon">${ICON.calendar}</span>
+        <div class="strip-main">
+          <span class="strip-label">Next time together</span>
+          <span class="strip-note">Plan a date and count down to it</span>
+        </div>
+        <button type="button" class="chip-button" data-visit-edit>Set</button>
+      </article>`;
+  } else {
+    const at = visit.at;
+    const left = new Date(at).getTime() - Date.now();
+    const day = new Date(at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: TIME_ZONE });
+    el.innerHTML = `
+      <article class="strip visit">
+        <span class="strip-icon">${ICON.calendar}</span>
+        <div class="strip-main">
+          <span class="strip-label">${escapeHtml(visit.title || "Next date")}</span>
+          <span class="strip-time">${left > 0 ? formatDuration(left) : "Today!"}</span>
+          <span class="strip-note">${day} · ${formatAt(at, null, false)}</span>
+        </div>
+        <button type="button" class="chip-button" data-visit-edit>Edit</button>
+      </article>`;
+  }
+}
+
+function openVisitEditor() {
+  editingVisit = true;
+  const el = document.getElementById("visit-card");
+  el.innerHTML = `
+    <form class="strip visit editing" id="visit-form">
+      <span class="strip-label">Next time together</span>
+      <label class="field"><span>What</span>
+        <input id="visit-title" type="text" maxlength="60" placeholder="Dinner date, weekend away…" value="${escapeHtml(visit?.title || "")}">
+      </label>
+      <label class="field"><span>When</span>
+        <input id="visit-at" type="datetime-local" required value="${visit?.at ? toPickerValue(visit.at) : ""}">
+      </label>
+      <div class="visit-actions">
+        <button type="button" class="ghost" id="visit-cancel">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>`;
+  document.getElementById("visit-cancel").addEventListener("click", () => { editingVisit = false; visitKey = ""; renderVisit(); });
+  document.getElementById("visit-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = document.getElementById("visit-title").value.trim();
+    const atValue = document.getElementById("visit-at").value;
+    if (!atValue) return;
+    const { error } = await supabase.from("next_visit").upsert({ id: 1, title, at: new Date(atValue).toISOString() });
+    editingVisit = false;
+    visitKey = "";
+    if (error) { alert("Could not save: " + error.message); }
+    await loadVisit();
+  });
+}
+
+document.getElementById("visit-card").addEventListener("click", (e) => {
+  if (e.target.closest("[data-visit-edit]")) openVisitEditor();
+});
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ---------- THIS WEEK'S SCOREBOARD ----------
+
+const SCORE_ICON = {
+  kiss: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#ff6f91" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 5 6.4 5c2 0 3.6 1.1 4.6 2.6C12 6.1 13.6 5 15.6 5 19 5 21.1 8.5 19.6 11.8 17.5 16.4 12 21 12 21z"/></svg>',
+  hug: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="11" r="9" fill="#ffb547"/><path d="M8 9.5q1.2-1.3 2.4 0M13.6 9.5q1.2-1.3 2.4 0M8.8 13q3.2 2.8 6.4 0" fill="none" stroke="#3a2205" stroke-width="1.6" stroke-linecap="round"/></svg>',
+  punch: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2.5h6.5a5.5 5.5 0 0 1 5.5 5.5v3.5a5.5 5.5 0 0 1-5.5 5.5H8.5A4.5 4.5 0 0 1 4 12.5V6.5a4 4 0 0 1 4-4z" fill="#ff4545"/><rect x="6.5" y="17.6" width="10.5" height="4" rx="1.3" fill="#ffb0b0"/></svg>',
+};
+
+async function loadScores() {
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data, error } = await supabase.from("pings").select("sender_name, type").gte("created_at", since);
+  const el = document.getElementById("score-card");
+  if (error) { el.classList.add("hidden"); return; }
+
+  // Count per person per type
+  const people = {};
+  for (const name of ["Arc", "Josh"]) people[name] = { kiss: 0, hug: 0, punch: 0 };
+  for (const row of data || []) {
+    const name = row.sender_name || "Someone";
+    people[name] = people[name] || { kiss: 0, hug: 0, punch: 0 };
+    if (people[name][row.type] !== undefined) people[name][row.type]++;
+  }
+
+  el.innerHTML = `
+    <div class="score-head"><span>Last 7 days</span></div>
+    ${Object.entries(people).map(([name, c]) => `
+      <div class="score-row">
+        <span class="score-name">${escapeHtml(name)}</span>
+        <span class="score-cell">${SCORE_ICON.kiss}${c.kiss}</span>
+        <span class="score-cell">${SCORE_ICON.hug}${c.hug}</span>
+        <span class="score-cell">${SCORE_ICON.punch}${c.punch}</span>
+      </div>`).join("")}
+  `;
+  el.classList.remove("hidden");
+}
+
+// ---------- LANDING CELEBRATION ----------
+// Once per phone, when Josh's flight home has landed in the last 12 hours.
+
+function confettiBurst() {
+  const box = document.getElementById("confetti");
+  box.innerHTML = "";
+  const colors = ["#ff4545", "#ff6f91", "#ffb547", "#ffffff", "#ff9494"];
+  for (let i = 0; i < 90; i++) {
+    const p = document.createElement("span");
+    p.className = "confetto";
+    p.style.left = `${Math.random() * 100}%`;
+    p.style.background = colors[i % colors.length];
+    p.style.animationDelay = `${Math.random() * 0.8}s`;
+    p.style.animationDuration = `${2.2 + Math.random() * 1.6}s`;
+    p.style.setProperty("--spin", `${Math.random() * 720 - 360}deg`);
+    p.style.setProperty("--drift", `${Math.random() * 120 - 60}px`);
+    box.appendChild(p);
+  }
+}
+
+function maybeCelebrate(demo) {
+  const now = Date.now();
+  const f = flights.find((x) =>
+    HOME_AIRPORTS.includes(x.destination) && phaseOf(x) === "landed" &&
+    now - new Date(arrivalTime(x)).getTime() < 12 * 3600000
+  );
+  if (!f) return;
+  const key = `celebrated-${f.flightNumber}-${f.date}`;
+  if (!demo) {
+    try { if (localStorage.getItem(key)) return; } catch { /* storage blocked: still celebrate */ }
+  }
+  document.getElementById("celebrate-sub").textContent =
+    `Landed at ${f.destination} · ${formatAt(arrivalTime(f), null, false)}`;
+  document.getElementById("celebrate").classList.remove("hidden");
+  confettiBurst();
+  document.getElementById("celebrate-close").onclick = () => {
+    document.getElementById("celebrate").classList.add("hidden");
+    if (!demo) { try { localStorage.setItem(key, "1"); } catch { /* ignore */ } }
+  };
 }
 
 // ---------- DATA ----------
@@ -517,6 +761,7 @@ function render() {
 // ---------- DEMO MODE ----------
 // Add #demo to the address to see fake flights instead of real ones:
 //   #demo         = in the air right now (BWI → LAX)
+//   #demo-home    = just landed back home (shows the celebration)
 //   #demo-before  = flight leaves in about 2 hours
 //   #demo-landed  = just landed
 // Nothing is saved and no alerts are sent. Only you see it, on your own screen.
@@ -524,6 +769,17 @@ function render() {
 const DEMO_START = Date.now();
 
 function demoFlights(mode) {
+  if (mode === "home") {
+    const dep = new Date(DEMO_START - 330 * 60000).toISOString();
+    const arr = new Date(DEMO_START - 25 * 60000).toISOString();
+    return [{
+      id: "demo-3", flightNumber: "WN2477", origin: "LAX", destination: "BWI", date: dep.slice(0, 10),
+      originLat: 33.9425, originLon: -118.408, destinationLat: 39.1754, destinationLon: -76.6683,
+      departureUtc: dep, departureLocal: dep.slice(0, 16).replace("T", " ") + "-07:00",
+      arrivalUtc: arr, arrivalLocal: arr.slice(0, 16).replace("T", " ") + "-04:00",
+      actualDepartureUtc: dep, actualArrivalUtc: arr, status: "Arrived", lastCheckedUtc: arr,
+    }];
+  }
   const min = 60000;
   const at = (offsetMin) => new Date(DEMO_START + offsetMin * min).toISOString();
   const local = (iso, offsetHours) => {
@@ -576,6 +832,7 @@ function demoMode() {
   if (h === "demo") return "air";
   if (h === "demo-before") return "before";
   if (h === "demo-landed") return "landed";
+  if (h === "demo-home") return "home";
   return null;
 }
 
@@ -586,6 +843,7 @@ async function loadFlights() {
     flights = demoFlights(mode);
     render();
     renderMap(pickHero(flights));
+    if (mode === "home") maybeCelebrate(true);
     return;
   }
 
@@ -601,6 +859,7 @@ async function loadFlights() {
   flights = data;
   render();
   renderMap(pickHero(flights)); // the map only redraws when new data comes in
+  maybeCelebrate(false);
 }
 
 // ---------- ALERTS (push notifications) ----------
@@ -763,6 +1022,7 @@ pingButtons.forEach((button) => {
       pingStatus.textContent = "Sent, but no phones have alerts on.";
     } else {
       pingStatus.textContent = PING_DONE[type];
+      loadScores();
     }
 
     // Short cooldown so a button can't be spammed by accident
@@ -858,6 +1118,7 @@ function startTimers() {
   stopTimers();
   timers.push(setInterval(render, 1000));        // update countdowns every second
   timers.push(setInterval(loadFlights, 60000));  // get fresh data every minute
+  timers.push(setInterval(() => { loadVisit(); loadScores(); }, 60000));
 }
 function stopTimers() {
   timers.forEach(clearInterval);
@@ -869,7 +1130,10 @@ async function showCorrectView() {
   if (session) {
     loginView.classList.add("hidden");
     dashboardView.classList.remove("hidden");
+    await loadMe();
     await loadFlights();
+    loadVisit();
+    loadScores();
     startTimers();
     await refreshAlertsCard();
     maybeShowWelcome();
