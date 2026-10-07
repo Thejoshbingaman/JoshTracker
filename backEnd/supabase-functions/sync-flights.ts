@@ -137,6 +137,132 @@ async function lookupAndSave(flight: any) {
   return `${flight.flightNumber}: saved (${seg.departure.airport.iata} to ${seg.arrival.airport.iata})`;
 }
 
+// ================= HOTEL STAYS =================
+// Hotel bookings from Gmail are ALL-DAY events:
+//   Title:    "Stay at DoubleTree by Hilton Hotel Reading"
+//   Location: "701 Penn Street, Reading, PA 19601, USA"
+//   Start:    { date: "2026-10-06" }   (check-in day)
+//   End:      { date: "2026-10-09" }   (the day AFTER check-out: Google end dates are exclusive)
+// So we add the usual hotel times: check-in 3 PM, check-out 11 AM, in the hotel's time zone.
+
+const STATE_TZ: Record<string, string> = {
+  CT: "America/New_York", DE: "America/New_York", DC: "America/New_York", FL: "America/New_York",
+  GA: "America/New_York", IN: "America/Indiana/Indianapolis", KY: "America/New_York", ME: "America/New_York",
+  MD: "America/New_York", MA: "America/New_York", MI: "America/Detroit", NH: "America/New_York",
+  NJ: "America/New_York", NY: "America/New_York", NC: "America/New_York", OH: "America/New_York",
+  PA: "America/New_York", RI: "America/New_York", SC: "America/New_York", VT: "America/New_York",
+  VA: "America/New_York", WV: "America/New_York",
+  AL: "America/Chicago", AR: "America/Chicago", IL: "America/Chicago", IA: "America/Chicago",
+  KS: "America/Chicago", LA: "America/Chicago", MN: "America/Chicago", MS: "America/Chicago",
+  MO: "America/Chicago", NE: "America/Chicago", ND: "America/Chicago", OK: "America/Chicago",
+  SD: "America/Chicago", TN: "America/Chicago", TX: "America/Chicago", WI: "America/Chicago",
+  AZ: "America/Phoenix", CO: "America/Denver", ID: "America/Boise", MT: "America/Denver",
+  NM: "America/Denver", UT: "America/Denver", WY: "America/Denver",
+  CA: "America/Los_Angeles", NV: "America/Los_Angeles", OR: "America/Los_Angeles", WA: "America/Los_Angeles",
+  AK: "America/Anchorage", HI: "Pacific/Honolulu",
+};
+
+// "2026-10-06" + 15 (3 PM) in a time zone → UTC ISO string
+function localToUtc(day: string, hour: number, tz: string) {
+  const [y, m, d] = day.split("-").map(Number);
+  const guess = Date.UTC(y, m - 1, d, hour, 0);
+  const asUtc = Date.parse(new Date(guess).toLocaleString("en-US", { timeZone: "UTC" }));
+  const asZone = Date.parse(new Date(guess).toLocaleString("en-US", { timeZone: tz }));
+  return new Date(guess + (asUtc - asZone)).toISOString();
+}
+
+// "2026-10-09" → "2026-10-08"
+function dayBefore(day: string) {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
+
+function parseStayEvent(event: any) {
+  const hotel = (event.summary || "").replace(/^Stay at\s+/i, "").trim();
+  const location = (event.location || "").replace(/\n/g, ", ");
+  const parts = location.split(",").map((p: string) => p.trim()).filter(Boolean);
+  // Find the "PA 19601" part; the city is the part just before it
+  const i = parts.findIndex((p: string) => /^[A-Z]{2}\s+\d{5}/.test(p));
+  const city = i > 0 ? parts[i - 1] : null;
+  const state = i > 0 ? parts[i].slice(0, 2) : null;
+  const address = i > 0 ? parts.slice(Math.max(0, i - 2), i + 1).join(", ") : location;
+  const tz = (state && STATE_TZ[state]) || "America/New_York";
+
+  // Timed event: use its times. All-day event: 3 PM check-in, 11 AM check-out.
+  const checkIn = event.start?.dateTime || (event.start?.date ? localToUtc(event.start.date, 15, tz) : null);
+  const checkOut = event.end?.dateTime || (event.end?.date ? localToUtc(dayBefore(event.end.date), 11, tz) : null);
+
+  return { eventId: event.id, hotel, address, city, state, checkIn, checkOut };
+}
+
+// Address to [lat, lon] with OpenStreetMap (free, no key). Once per new hotel.
+async function geocode(query: string) {
+  try {
+    const res = await fetch(
+      "https://nominatim.openstreetmap.org/search?" +
+        new URLSearchParams({ q: query, format: "json", limit: "1", countrycodes: "us" }),
+      { headers: { "User-Agent": "JoshTracker/1.0 (personal flight tracker)" } }
+    );
+    const data = await res.json();
+    if (data?.[0]) return { lat: Number(data[0].lat), lon: Number(data[0].lon) };
+  } catch { /* fall through */ }
+  return { lat: null, lon: null };
+}
+
+async function syncStays(events: any[]) {
+  const results: string[] = [];
+  const stayEvents = events.filter((e: any) => /^Stay at /i.test(e.summary || ""));
+  const { data: saved } = await supabase.from("stays").select("event_id, address, lat, lon");
+
+  for (const e of stayEvents) {
+    const s = parseStayEvent(e);
+    if (!s.checkIn || !s.checkOut || !s.city) {
+      // Show exactly what Google sent, so the parser can be fixed
+      const raw = JSON.stringify({ location: e.location ?? null, start: e.start ?? null, end: e.end ?? null, eventType: e.eventType ?? null });
+      results.push(`could not read hotel event "${e.summary}": ${raw}`);
+      continue;
+    }
+    // Reuse the saved location if the address did not change
+    const old = (saved || []).find((r: any) => r.event_id === s.eventId);
+    let where = { lat: null as number | null, lon: null as number | null };
+    if (old && old.address === s.address && old.lat != null) {
+      where = { lat: old.lat, lon: old.lon };
+    } else {
+      where = await geocode(s.address);                                    // the street address
+      if (where.lat == null) where = await geocode(`${s.city}, ${s.state}`); // or just the city
+    }
+
+    const { error } = await supabase.from("stays").upsert(
+      {
+        event_id: s.eventId,
+        hotel: s.hotel,
+        address: s.address,
+        city: s.city,
+        state: s.state,
+        lat: where.lat,
+        lon: where.lon,
+        check_in: s.checkIn,
+        check_out: s.checkOut,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "event_id" }
+    );
+    results.push(error ? `stay ${s.city}: database error: ${error.message}` : `stay ${s.city}: saved`);
+  }
+
+  // A future stay that is no longer in the calendar was canceled: remove it.
+  // (Only when the calendar answered, so a Google hiccup never wipes the list.)
+  if (events.length > 0) {
+    const ids = stayEvents.map((e: any) => `"${e.id}"`).join(",");
+    let q = supabase.from("stays").delete().gt("check_out", new Date().toISOString());
+    if (ids) q = q.not("event_id", "in", `(${ids})`);
+    await q;
+  }
+  // Stays that ended more than 24 hours ago
+  await supabase.from("stays").delete().lt("check_out", new Date(Date.now() - 86400000).toISOString());
+  return results;
+}
+
 // MAIN
 Deno.serve(async (req) => {
   // Test mode: send {"testAlert": true} to check that problem alerts reach your phone
@@ -174,6 +300,9 @@ Deno.serve(async (req) => {
         results.push(await lookupAndSave(flight));
       }
     }
+
+    // Hotel stays from the same calendar events (no paid API calls)
+    results.push(...(await syncStays(events)));
 
     // Delete flights that landed more than 24 hours ago
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();

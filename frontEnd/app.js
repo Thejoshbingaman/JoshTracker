@@ -44,6 +44,7 @@ const loginError = document.getElementById("login-error");
 const logoutButton = document.getElementById("logout");
 
 let flights = [];      // flights from the database
+let stays = [];        // hotel stays from the database
 let timers = [];       // so we can stop the timers on sign out
 
 // ---------- TIME HELPERS ----------
@@ -174,6 +175,7 @@ const ICON = {
   plane: (deg = 0) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" transform="rotate(${deg} 12 12)" d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`,
   home: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 11l9-7 9 7M5 10v10h14V10"/></svg>`,
   pin: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></svg>`,
+  bed: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 6v13M3 15h18v4M21 15v-3a2 2 0 0 0-2-2h-8v5"/><circle cx="7" cy="12" r="1.8" fill="currentColor"/></svg>`,
   calendar: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 10h16M8 3v4M16 3v4"/></svg>`,
 };
 
@@ -185,10 +187,33 @@ function homeFlightFrom(hero) {
   ) || null;
 }
 
+// The hotel stay going on right now (null if none)
+function currentStay() {
+  const now = Date.now();
+  return stays.find((s) => new Date(s.check_in).getTime() <= now && now < new Date(s.check_out).getTime()) || null;
+}
+
+// The hotel stay that covers the night of this day ("2026-10-07"), if any
+function stayOnNight(dayKey) {
+  return stays.find((s) => dayKeyET(s.check_in) <= dayKey && dayKey < dayKeyET(s.check_out)) || null;
+}
+
+// A hotel stay wins the headline unless a flight is in the air, just landed, or has a problem
+function stayShowing(hero) {
+  const stay = currentStay();
+  if (!stay) return null;
+  return !hero || phaseOf(hero) === "upcoming" ? stay : null;
+}
+
 function renderHeadline(hero) {
   let kicker = "", title = "", sub = "";
+  const stay = stayShowing(hero);
 
-  if (!hero) {
+  if (stay) {
+    kicker = "Staying over";
+    title = `Josh is in ${stay.city}`;
+    sub = `${stay.hotel} · checks out ${formatAt(stay.check_out)}`;
+  } else if (!hero) {
     const last = flights[flights.length - 1];
     if (last && !HOME_AIRPORTS.includes(last.destination)) {
       kicker = "On the ground";
@@ -259,6 +284,8 @@ function milesBetween(a, b) {
 
 // Where Josh is right now, as [lat, lon] (null if unknown)
 function joshPosition(hero) {
+  const stay = stayShowing(hero);
+  if (stay && stay.lat != null) return [stay.lat, stay.lon];
   if (!hero || hero.originLat == null || hero.destinationLat == null) return null;
   const phase = phaseOf(hero);
   const from = [hero.originLat, hero.originLon];
@@ -359,7 +386,24 @@ function renderHero(hero) {
 function renderHomeCard(hero) {
   const el = document.getElementById("home-card");
   const hf = homeFlightFrom(hero);
-  if (!hf) { el.innerHTML = ""; return; }
+  if (!hf) {
+    // Driving trip: count down to hotel checkout instead
+    const stay = currentStay();
+    if (!stay) { el.innerHTML = ""; return; }
+    const out = stay.check_out;
+    const outDay = new Date(out).toLocaleDateString("en-US", { weekday: "short", timeZone: TIME_ZONE });
+    el.innerHTML = `
+      <article class="strip home">
+        <span class="strip-icon">${ICON.bed}</span>
+        <div class="strip-main">
+          <span class="strip-label">Checks out in</span>
+          <span class="strip-time">${formatDuration(new Date(out) - Date.now())}</span>
+        </div>
+        <span class="strip-side">${outDay}<br>${formatAt(out, null, false)}</span>
+      </article>
+    `;
+    return;
+  }
 
   const at = arrivalTime(hf);
   const day = new Date(at).toLocaleDateString("en-US", { weekday: "short", timeZone: TIME_ZONE });
@@ -381,7 +425,8 @@ function renderTimeline() {
   const title = document.getElementById("timeline-title");
 
   const active = flights.filter((f) => phaseOf(f) !== "landed" && phaseOf(f) !== "canceled");
-  if (active.length === 0) {
+  const upcomingStays = stays.filter((s) => new Date(s.check_out).getTime() > Date.now());
+  if (active.length === 0 && upcomingStays.length === 0) {
     el.classList.add("hidden");
     title.classList.add("hidden");
     return;
@@ -390,7 +435,7 @@ function renderTimeline() {
   const today = new Date();
   today.setHours(12, 0, 0, 0); // midday avoids daylight-saving edge cases
 
-  let where = active[0].origin;
+  let where = active.length ? active[0].origin : HOME_AIRPORTS[0];
   const rows = [];
 
   for (let i = 0; i < 7; i++) {
@@ -402,6 +447,7 @@ function renderTimeline() {
     const num = day.toLocaleDateString("en-US", { day: "numeric", timeZone: TIME_ZONE });
 
     let body, icon = "";
+    const stayNight = stayOnNight(key);
     if (todays.length > 0) {
       body = todays.map((f) => `
         <div class="tl-flight">
@@ -410,6 +456,9 @@ function renderTimeline() {
         </div>`).join("");
       icon = `<span class="tl-icon fly">${ICON.plane(f0dir(todays[0]))}</span>`;
       where = todays[todays.length - 1].destination;
+    } else if (stayNight) {
+      body = `<span class="tl-where">In ${escapeHtml(stayNight.city)} · hotel</span>`;
+      icon = `<span class="tl-icon">${ICON.bed}</span>`;
     } else if (HOME_AIRPORTS.includes(where)) {
       body = `<span class="tl-where home">Home</span>`;
       icon = `<span class="tl-icon">${ICON.home}</span>`;
@@ -764,11 +813,24 @@ function maybeCelebrate(demo) {
 //   #demo-home    = just landed back home (shows the celebration)
 //   #demo-before  = flight leaves in about 2 hours
 //   #demo-landed  = just landed
+//   #demo-hotel   = staying at a hotel on a driving trip
 // Nothing is saved and no alerts are sent. Only you see it, on your own screen.
 
 const DEMO_START = Date.now();
 
+function demoStays(mode) {
+  if (mode !== "hotel") return [];
+  const day = 86400000;
+  return [{
+    id: "demo-stay", hotel: "DoubleTree by Hilton Hotel Reading", city: "Reading", state: "PA",
+    lat: 40.3356, lon: -75.9269,
+    check_in: new Date(DEMO_START - 0.8 * day).toISOString(),
+    check_out: new Date(DEMO_START + 1.2 * day).toISOString(),
+  }];
+}
+
 function demoFlights(mode) {
+  if (mode === "hotel") return [];
   if (mode === "home") {
     const dep = new Date(DEMO_START - 330 * 60000).toISOString();
     const arr = new Date(DEMO_START - 25 * 60000).toISOString();
@@ -833,6 +895,7 @@ function demoMode() {
   if (h === "demo-before") return "before";
   if (h === "demo-landed") return "landed";
   if (h === "demo-home") return "home";
+  if (h === "demo-hotel") return "hotel";
   return null;
 }
 
@@ -841,6 +904,7 @@ async function loadFlights() {
   document.body.classList.toggle("demo", !!mode);
   if (mode) {
     flights = demoFlights(mode);
+    stays = demoStays(mode);
     render();
     renderMap(pickHero(flights));
     if (mode === "home") maybeCelebrate(true);
@@ -857,6 +921,9 @@ async function loadFlights() {
     return;
   }
   flights = data;
+  const since = new Date(Date.now() - 86400000).toISOString();
+  const stayRes = await supabase.from("stays").select("*").gt("check_out", since).order("check_in");
+  stays = stayRes.error ? [] : stayRes.data; // no stays table yet = no stays
   render();
   renderMap(pickHero(flights)); // the map only redraws when new data comes in
   maybeCelebrate(false);
@@ -877,6 +944,24 @@ if ("serviceWorker" in navigator) {
 function keyToBytes(base64) {
   const padded = (base64 + "=".repeat((4 - (base64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/");
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+}
+
+// Save this phone's address so the server can reach it
+async function saveSubscription(subscription) {
+  const json = subscription.toJSON();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { error } = await supabase.from("push_subscriptions").upsert(
+    {
+      user_id: user.id,
+      endpoint: json.endpoint,
+      p256dh: json.keys.p256dh,
+      auth: json.keys.auth,
+      user_agent: navigator.userAgent,
+    },
+    { onConflict: "endpoint" }
+  );
+  return error;
 }
 
 // Show or hide the "Turn on alerts" card
@@ -907,6 +992,7 @@ async function refreshAlertsCard() {
   const subscription = await registration.pushManager.getSubscription();
   if (subscription && Notification.permission === "granted") {
     alertsCard.classList.add("hidden"); // already on
+    saveSubscription(subscription);     // re-save each time, in case the server lost it
     return;
   }
 
@@ -928,19 +1014,7 @@ alertsButton.addEventListener("click", async () => {
       applicationServerKey: keyToBytes(VAPID_PUBLIC_KEY),
     });
 
-    // Save this phone's address so the server can reach it
-    const json = subscription.toJSON();
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await supabase.from("push_subscriptions").upsert(
-      {
-        user_id: user.id,
-        endpoint: json.endpoint,
-        p256dh: json.keys.p256dh,
-        auth: json.keys.auth,
-        user_agent: navigator.userAgent,
-      },
-      { onConflict: "endpoint" }
-    );
+    const error = await saveSubscription(subscription);
     if (error) alert("Could not save alerts: " + error.message);
   } catch (err) {
     alert("Could not turn on alerts: " + err.message);
