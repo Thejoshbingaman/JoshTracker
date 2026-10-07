@@ -85,16 +85,17 @@ function dayKeyET(time) {
   return new Date(time).toLocaleDateString("en-CA", { timeZone: TIME_ZONE });
 }
 
-// "2d 4h 12m", "1h 05m", or "12m 30s"
+// "2d 04:12:09" or "01:19:42"
 function formatDuration(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
   const d = Math.floor(total / 86400);
   const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
-  return `${m}m ${String(s).padStart(2, "0")}s`;
+  // Ticking clock style: 04:12:09, or 2d 04:12:09 when more than a day away
+  const pad = (n) => String(n).padStart(2, "0");
+  const clock = `${pad(h)}:${pad(m)}:${pad(s)}`;
+  return d > 0 ? `${d}d ${clock}` : clock;
 }
 
 // "just now", "4 min ago", "2 hr ago"
@@ -479,7 +480,7 @@ function renderMap(hero) {
   } else {
     flown = []; toGo = fullPath;
   }
-  if (toGo.length) L.polyline(toGo, { color: "#8a939c", opacity: 0.6, weight: 2, dashArray: "3 6" }).addTo(mapLayers);
+  if (toGo.length) L.polyline(toGo, { color: "#4a525a", opacity: 1, weight: 2, dashArray: "3 6" }).addTo(mapLayers);
   if (flown.length) L.polyline(flown, { color: "#e6ebef", weight: 2.5 }).addTo(mapLayers);
 
   // Airports
@@ -513,7 +514,81 @@ function render() {
 
 // ---------- DATA ----------
 
+// ---------- DEMO MODE ----------
+// Add #demo to the address to see fake flights instead of real ones:
+//   #demo         = in the air right now (BWI → LAX)
+//   #demo-before  = flight leaves in about 2 hours
+//   #demo-landed  = just landed
+// Nothing is saved and no alerts are sent. Only you see it, on your own screen.
+
+const DEMO_START = Date.now();
+
+function demoFlights(mode) {
+  const min = 60000;
+  const at = (offsetMin) => new Date(DEMO_START + offsetMin * min).toISOString();
+  const local = (iso, offsetHours) => {
+    const d = new Date(new Date(iso).getTime() + offsetHours * 3600000);
+    const sign = offsetHours < 0 ? "-" : "+";
+    const hh = String(Math.abs(offsetHours)).padStart(2, "0");
+    return d.toISOString().slice(0, 16).replace("T", " ") + `${sign}${hh}:00`;
+  };
+
+  // Departure time relative to now for each mode
+  const depOffset = mode === "before" ? 120 : mode === "landed" ? -340 : -120;
+  const dep = at(depOffset);
+  const arr = at(depOffset + 320);
+
+  const outbound = {
+    id: "demo-1", flightNumber: "WN1045", origin: "BWI", destination: "LAX",
+    date: dep.slice(0, 10),
+    originLat: 39.1754, originLon: -76.6683, destinationLat: 33.9425, destinationLon: -118.408,
+    departureUtc: dep, departureLocal: local(dep, -4),
+    arrivalUtc: arr, arrivalLocal: local(arr, -7),
+    revisedDepartureUtc: at(depOffset + 20),      // a 20-minute delay, so the badge shows
+    predictedArrivalUtc: at(depOffset + 335),
+    status: "Expected",
+    lastCheckedUtc: at(-4),
+  };
+  if (mode === "air" || mode === "landed") {
+    outbound.actualDepartureUtc = at(depOffset + 20);
+    outbound.status = "EnRoute";
+  }
+  if (mode === "landed") {
+    outbound.actualArrivalUtc = at(depOffset + 330);
+    outbound.status = "Arrived";
+  }
+
+  const back = at(3 * 1440 + 600);
+  const backArr = at(3 * 1440 + 600 + 290);
+  const inbound = {
+    id: "demo-2", flightNumber: "WN2477", origin: "LAX", destination: "BWI",
+    date: back.slice(0, 10),
+    originLat: 33.9425, originLon: -118.408, destinationLat: 39.1754, destinationLon: -76.6683,
+    departureUtc: back, departureLocal: local(back, -7),
+    arrivalUtc: backArr, arrivalLocal: local(backArr, -4),
+    status: "Expected",
+  };
+  return [outbound, inbound];
+}
+
+function demoMode() {
+  const h = location.hash.replace("#", "");
+  if (h === "demo") return "air";
+  if (h === "demo-before") return "before";
+  if (h === "demo-landed") return "landed";
+  return null;
+}
+
 async function loadFlights() {
+  const mode = demoMode();
+  document.body.classList.toggle("demo", !!mode);
+  if (mode) {
+    flights = demoFlights(mode);
+    render();
+    renderMap(pickHero(flights));
+    return;
+  }
+
   const { data, error } = await supabase
     .from("flights")
     .select("*")
@@ -828,5 +903,7 @@ logoutButton.addEventListener("click", async () => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && timers.length) loadFlights();
 });
+
+window.addEventListener("hashchange", () => { if (timers.length) loadFlights(); });
 
 showCorrectView();

@@ -36,7 +36,7 @@
     <section id="dashboard-view" class="hidden">
       <header class="topbar">
         <span class="brand">JoshTracker</span>
-        <button id="logout" class="ghost">Sign out</button>
+        <span class="live"><span class="live-dot"></span>LIVE</span>
       </header>
 
       <!-- "Turn on alerts" card (hides itself once alerts are on) -->
@@ -68,7 +68,6 @@
 
       <!-- Kiss / Hug / Punch -->
       <div class="pings-wrap">
-        <p class="section-title">Send a…</p>
         <div class="pings">
           <button type="button" class="ping ping-kiss" data-type="kiss"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 5 6.4 5c2 0 3.6 1.1 4.6 2.6C12 6.1 13.6 5 15.6 5 19 5 21.1 8.5 19.6 11.8 17.5 16.4 12 21 12 21z"/></svg><span>Kiss</span></button>
           <button type="button" class="ping ping-hug" data-type="hug"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 14.5s-3.6-2.2-4.6-4.4C6.7 8.5 7.7 6.8 9.3 6.8c1.1 0 1.9.6 2.7 1.5.8-.9 1.6-1.5 2.7-1.5 1.6 0 2.6 1.7 1.9 3.3-1 2.2-4.6 4.4-4.6 4.4z" fill="currentColor"/><path d="M3 10c0 5.5 4 9.5 9 9.5s9-4 9-9.5"/><path d="M3 10l2-2M21 10l-2-2"/></svg><span>Hug</span></button>
@@ -83,7 +82,7 @@
 
       <p class="footnote">All times are Eastern (ET).</p>
       <p class="legal"><button type="button" id="open-welcome" class="link-button">♥ Read Josh's note again</button></p>
-      <p class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></p>
+      <p class="legal"><a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a> · <button type="button" id="logout" class="link-button">Sign out</button></p>
     </section>
 
   </main>
