@@ -88,6 +88,29 @@ Deno.serve(async (req) => {
       return Response.json({ ok: true, redeemed: used }, { headers: cors });
     }
 
+    // Found an easter egg: {"egg": "combo"}. Saved once; Josh gets an alert when Arc finds one.
+    const EGGS: Record<string, string> = {
+      note: "the secret note", combo: "the combo", roll: "the barrel roll",
+      shake: "the shake punch", meter: "the love meter",
+    };
+    if (body.egg) {
+      if (!EGGS[body.egg]) return Response.json({ ok: false, error: "Unknown egg" }, { status: 400, headers: cors });
+      const { data: added } = await admin.from("easter_eggs")
+        .upsert({ user_id: user.id, egg: body.egg }, { onConflict: "user_id,egg", ignoreDuplicates: true })
+        .select("egg");
+      const { count: found } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true }).eq("user_id", user.id);
+      const isNew = (added || []).length > 0;
+      if (isNew && !isJosh) {
+        const { data: joshSubs } = await admin.from("push_subscriptions").select("*").eq("user_id", adminId);
+        await push(joshSubs || [], {
+          title: `${name} found an easter egg`,
+          body: `She found ${EGGS[body.egg]}. That's ${found} of ${Object.keys(EGGS).length}.`,
+          tag: `egg-${body.egg}`,
+        });
+      }
+      return Response.json({ ok: true, isNew, found, total: Object.keys(EGGS).length }, { headers: cors });
+    }
+
     // 2. Ping limit: a stuck button or a bug can't flood a phone
     const minuteAgo = new Date(Date.now() - 60000).toISOString();
     const { count: recent } = await admin.from("pings").select("id", { count: "exact", head: true })

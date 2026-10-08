@@ -715,7 +715,8 @@ function renderMap(hero) {
   if (phase === "air") {
     const heading = hero.heading ?? (toGo.length > 1 ? bearing(toGo[0], toGo[1]) : bearing(from, to));
     L.marker(pos, {
-      interactive: false,
+      interactive: true,       // tappable for an easter egg
+      keyboard: false,
       icon: L.divIcon({
         className: "map-plane",
         html: `<div style="transform: rotate(${heading - 90}deg)">${PLANE_SVG}</div>`,
@@ -800,6 +801,7 @@ async function loadProfiles() {
   profiles = data || [];
   paintAvatar(document.getElementById("me-avatar"), profiles.find((p) => p.id === myId), myName);
   paintScoreAvatars();
+  if (myName.toLowerCase() === "josh") loadEggs();
 }
 
 function paintScoreAvatars() {
@@ -1549,6 +1551,241 @@ pingButtons.forEach((button) => {
   });
 });
 
+
+// ---------- EASTER EGGS ----------
+// Hidden on purpose. Nothing in the app points to them.
+//   note   tap the headline 7 times
+//   combo  tap Kiss, Hug, Punch in order, fast
+//   roll   tap the plane on the map 5 times
+//   shake  shake the phone to send a punch
+//   meter  press and hold the "Live" chip
+// Plus birthday mode on her birthday (set in the secrets table).
+
+const EGG_TOTAL = 5;
+let eggsFound = new Set();
+let secrets = null;
+
+async function loadSecrets() {
+  if (secrets || isFamily) return secrets || {};
+  const { data } = await supabase.from("secrets").select("key, value");
+  secrets = Object.fromEntries((data || []).map((r) => [r.key, r.value]));
+  return secrets;
+}
+
+// Count: your own finds; on Josh's phone, Arc's finds
+async function loadEggs() {
+  if (isFamily) return;
+  const who = myName.toLowerCase() === "josh" ? arcProfile()?.id : myId;
+  if (!who) return renderEggCounter();
+  const { data } = await supabase.from("easter_eggs").select("egg").eq("user_id", who);
+  eggsFound = new Set((data || []).map((r) => r.egg));
+  renderEggCounter();
+}
+
+function renderEggCounter() {
+  const el = document.getElementById("egg-counter");
+  if (!el) return;
+  if (isFamily || eggsFound.size === 0) { el.classList.add("hidden"); return; }
+  el.textContent = myName.toLowerCase() === "josh"
+    ? `${otherName()} found ${eggsFound.size} of ${EGG_TOTAL} easter eggs`
+    : `${eggsFound.size} of ${EGG_TOTAL} easter eggs found`;
+  el.classList.remove("hidden");
+}
+
+const toastEl = document.createElement("div");
+toastEl.className = "egg-toast hidden";
+document.body.appendChild(toastEl);
+function eggToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.remove("hidden");
+  toastEl.classList.remove("show"); void toastEl.offsetWidth; toastEl.classList.add("show");
+  clearTimeout(eggToast.t);
+  eggToast.t = setTimeout(() => toastEl.classList.add("hidden"), 3200);
+}
+
+async function eggFound(key) {
+  if (isFamily) return;
+  const mine = myName.toLowerCase() !== "josh";
+  if (mine && eggsFound.has(key)) return;           // already found: no repeat toast
+  if (mine) { eggsFound.add(key); renderEggCounter(); eggToast(`Easter egg found · ${eggsFound.size} of ${EGG_TOTAL}`); }
+  if (location.hash.startsWith("#demo")) return;    // previews save nothing
+  supabase.functions.invoke("send-kiss", { body: { egg: key } }).catch(() => {});
+}
+
+// Count fast taps: returns true on the Nth tap within the time window
+function tapCounter(n, ms) {
+  let times = [];
+  return () => {
+    const now = Date.now();
+    times = times.filter((t) => now - t < ms);
+    times.push(now);
+    if (times.length >= n) { times = []; return true; }
+    return false;
+  };
+}
+
+// 1. Secret note: tap the headline 7 times
+const headlineTaps = tapCounter(7, 3000);
+document.getElementById("headline-title").addEventListener("click", async () => {
+  if (isFamily || !headlineTaps()) return;
+  const sec = await loadSecrets();
+  const note = sec.secret_note || "You found the secret note. Josh hasn't written it yet ;)";
+  openSheet(`
+    <p class="sheet-kicker">Shh</p>
+    <h2 class="sheet-title">A secret note</h2>
+    <div class="m-card egg-note"><p class="m-note">${escapeHtml(note).replace(/\n/g, "<br>")}</p><p class="m-sign">Josh</p></div>`);
+  eggFound("note");
+});
+
+// 2. The combo: Kiss, Hug, Punch in order within 3 seconds
+let comboSeq = [];
+pingButtons.forEach((b) => b.addEventListener("pointerdown", () => {
+  const now = Date.now();
+  comboSeq = comboSeq.filter((c) => now - c.t < 3000);
+  comboSeq.push({ type: b.dataset.type, t: now });
+  const last = comboSeq.slice(-3).map((c) => c.type).join(",");
+  if (last === "kiss,hug,punch") { comboSeq = []; setTimeout(showCombo, 250); }
+}));
+function showCombo() {
+  const el = document.createElement("div");
+  el.className = "combo";
+  el.innerHTML = `<span class="combo-word">COMBO!</span><span class="combo-sub">Kiss · Hug · Punch</span>`;
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate([40, 30, 40, 30, 120]);
+  setTimeout(() => el.remove(), 1900);
+  eggFound("combo");
+}
+
+// 3. Barrel roll: tap the plane on the map 5 times
+const planeTaps = tapCounter(5, 3000);
+document.getElementById("map").addEventListener("click", (e) => {
+  const plane = e.target.closest(".map-plane");
+  if (!plane || !planeTaps()) return;
+  plane.classList.remove("roll"); void plane.offsetWidth; plane.classList.add("roll");
+  setTimeout(() => plane.classList.remove("roll"), 1400);
+  eggFound("roll");
+});
+
+// 4. Shake the phone to send a punch
+let shakeHits = [], lastShake = 0, lastAcc = null, motionOn = false;
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x == null) return;
+  if (lastAcc) {
+    const jolt = Math.abs(a.x - lastAcc.x) + Math.abs(a.y - lastAcc.y) + Math.abs(a.z - lastAcc.z);
+    const now = Date.now();
+    if (jolt > 30) {
+      shakeHits = shakeHits.filter((t) => now - t < 900);
+      shakeHits.push(now);
+      if (shakeHits.length >= 4 && now - lastShake > 6000 && !document.hidden) {
+        lastShake = now; shakeHits = [];
+        const punch = document.querySelector(".ping-punch");
+        if (punch && !punch.disabled && !isFamily && dashboardView && !dashboardView.classList.contains("hidden")) {
+          punch.click();
+          eggFound("shake");
+        }
+      }
+    }
+  }
+  lastAcc = { x: a.x, y: a.y, z: a.z };
+}
+function startMotion() {
+  if (motionOn || isFamily) return;
+  motionOn = true;
+  window.addEventListener("devicemotion", onMotion);
+}
+// iPhone asks for motion permission; ask once, on her first tap of a ping button
+async function askMotion() {
+  if (motionOn || isFamily) return;
+  const ask = window.DeviceMotionEvent?.requestPermission;
+  if (typeof ask !== "function") return startMotion();       // Android: no prompt needed
+  let asked = null;
+  try { asked = localStorage.getItem("jt-motion"); } catch { /* storage off */ }
+  if (asked === "denied") return;
+  try {
+    const result = await ask();
+    try { localStorage.setItem("jt-motion", result); } catch { /* storage off */ }
+    if (result === "granted") startMotion();
+  } catch { /* not allowed here */ }
+}
+pingButtons.forEach((b) => b.addEventListener("click", askMotion));
+if (typeof window.DeviceMotionEvent?.requestPermission !== "function") startMotion();
+
+// 5. Love meter: press and hold the "Live" chip
+const liveChip = document.querySelector(".live");
+let holdTimer = null;
+liveChip.addEventListener("pointerdown", () => { holdTimer = setTimeout(showLoveMeter, 700); });
+["pointerup", "pointerleave", "pointercancel"].forEach((ev) => liveChip.addEventListener(ev, () => clearTimeout(holdTimer)));
+liveChip.addEventListener("contextmenu", (e) => e.preventDefault());
+
+function showLoveMeter() {
+  const who = isFamily ? "Josh" : otherName();
+  const el = document.createElement("div");
+  el.className = "meter";
+  el.innerHTML = `
+    <div class="meter-card">
+      <p class="meter-kicker">Live reading</p>
+      <p class="meter-title">${escapeHtml(who)} is thinking about you</p>
+      <div class="meter-bar"><div class="meter-fill"></div></div>
+      <p class="meter-num"><span>0</span>%</p>
+      <p class="meter-sub"></p>
+    </div>`;
+  document.body.appendChild(el);
+  const num = el.querySelector(".meter-num span"), fill = el.querySelector(".meter-fill"), sub = el.querySelector(".meter-sub");
+  const start = performance.now();
+  const tick = (t) => {
+    const k = (t - start) / 1000;
+    let v;
+    if (k < 1.6) v = Math.round(100 * (1 - Math.pow(1 - k / 1.6, 3)));       // ease up to 100
+    else v = Math.round(100 + Math.pow((k - 1.6) * 6, 2.6));                    // then it breaks
+    if (v > 9999) {
+      num.parentElement.innerHTML = "∞";
+      sub.textContent = "Meter broken. Too much love.";
+      el.classList.add("broken");
+      if (navigator.vibrate) navigator.vibrate([30, 30, 30, 30, 200]);
+      return;
+    }
+    num.textContent = v;
+    fill.style.width = `${Math.min(100, v)}%`;
+    if (v > 100) el.classList.add("over");
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  el.addEventListener("click", () => el.remove());
+  if (!isFamily) eggFound("meter");
+}
+
+// 6. Birthday mode: on her birthday (Eastern), once that day
+async function maybeBirthday(force = false) {
+  if (isFamily) return;
+  if (!force && myName.toLowerCase() === "josh") return;
+  const sec = force ? { birthday_message: "This is a preview. Your birthday message shows here, word for word." } : await loadSecrets();
+  const today = dayKeyET(Date.now());                       // "2026-03-14"
+  if (!force && sec.birthday !== today.slice(5)) return;
+  let shown = null;
+  try { shown = localStorage.getItem("jt-birthday"); } catch { /* storage off */ }
+  if (!force && shown === today) return;
+  try { localStorage.setItem("jt-birthday", today); } catch { /* storage off */ }
+
+  const cake = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2" fill="#ff6f91"/><path d="M4 14.5q2 1.6 4 0t4 0 4 0 4 0" fill="none" stroke="#fff" stroke-width="1.4"/><rect x="11.2" y="6" width="1.6" height="5" rx=".8" fill="#ffb547"/><path d="M12 2.5c1 1.2 1 2.2 0 3-1-.8-1-1.8 0-3z" fill="#ff4545"/></svg>`;
+  const floaters = Array.from({ length: 24 }, (_, i) =>
+    `<span class="m-float" style="left:${(i * 41) % 100}%;animation-delay:${(i % 8) * 0.4}s;animation-duration:${4 + (i % 5)}s;--s:${0.6 + (i % 4) * 0.25}">${cake}</span>`).join("");
+  const el = document.createElement("div");
+  el.className = "milestone birthday";
+  el.innerHTML = `
+    <div class="m-floaters" aria-hidden="true">${floaters}</div>
+    <div class="m-inner">
+      <div class="m-badge"><span class="m-icon">${cake}</span></div>
+      <p class="m-kicker">Today is your day</p>
+      <h1 class="m-count">Happy Birthday, ${escapeHtml(myName.toLowerCase() === "josh" ? "Arc" : myName)}</h1>
+      <div class="m-card"><p class="m-note">${escapeHtml(sec.birthday_message || "Happy birthday!").replace(/\n/g, "<br>")}</p><p class="m-sign">Josh</p></div>
+      <button type="button" class="m-close">Best day ever</button>
+    </div>`;
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate([60, 40, 60, 40, 160]);
+  el.querySelector(".m-close").addEventListener("click", () => el.remove());
+}
+
 // ---------- WELCOME NOTE ----------
 // Shows once when the user has "showWelcome": true in their account (set with SQL).
 // The note text lives in the welcome_note table, so it never appears in the public code.
@@ -1727,6 +1964,8 @@ async function showCorrectView() {
       loadScores();
       checkMilestones();
       loadCoupons();
+      loadEggs();
+      if (location.hash === "#demo-birthday") maybeBirthday(true); else maybeBirthday();
     }
     startTimers();
     startRealtime();
