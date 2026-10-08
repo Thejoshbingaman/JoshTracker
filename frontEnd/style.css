@@ -695,3 +695,18 @@ form { display: flex; flex-direction: column; gap: 12px; }
 @media (prefers-reduced-motion: reduce) { .m-ticket-wrap { animation: none; } }
 .milestone { overflow-y: auto; place-items: safe center; }
 .m-floaters { position: fixed; }
+
+/* ---------- Profile photos ---------- */
+.avatar { overflow: hidden; cursor: pointer; flex-shrink: 0; position: relative; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar.busy { opacity: 0.5; }
+#me-avatar::after {                       /* small "+" so it looks tappable */
+  content: "+"; position: absolute; right: -2px; bottom: -2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; line-height: 1; font-weight: 700;
+  color: #fff; background: var(--red); border: 2px solid var(--bg);
+}
+#me-avatar { overflow: visible; }
+#me-avatar img { border-radius: 50%; }
+.avatar.small { width: 26px; height: 26px; font-size: 12px; cursor: default; }
+.score-name { display: flex; align-items: center; gap: 10px; }

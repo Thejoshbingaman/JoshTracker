@@ -754,10 +754,103 @@ async function loadMe() {
   myName = user?.user_metadata?.name || "";
   isFamily = user?.app_metadata?.role === "family" || location.hash === "#demo-family"; // #demo-family = preview Mom's view
   document.body.classList.toggle("family", isFamily);
+  myId = user?.id || null;
   document.getElementById("me-avatar").textContent = (myName || "?").slice(0, 1).toUpperCase();
   document.getElementById("me-hi").textContent = myName ? `Hi, ${myName}` : "Hi";
   document.getElementById("ping-title").textContent = `Send ${otherName()} something`;
+  loadProfiles();
 }
+
+// ---------- PROFILE PHOTOS ----------
+// Tap your circle (top left) to pick a photo. It is shrunk to a small square on the phone,
+// saved in a private Supabase folder, and shown to the other person too.
+
+let myId = null;
+let profiles = [];            // [{ id, name, avatar_path, is_family, updated_at }]
+const photoUrls = {};         // profile id -> temporary link to the photo
+
+async function photoUrl(p) {
+  if (!p?.avatar_path) return null;
+  const key = `${p.id}:${p.updated_at}`;
+  if (photoUrls[key]) return photoUrls[key];
+  const { data } = await supabase.storage.from("avatars").createSignedUrl(p.avatar_path, 60 * 60 * 24);
+  if (data?.signedUrl) photoUrls[key] = data.signedUrl;
+  return photoUrls[key] || null;
+}
+
+// Fill a circle with a photo, or the first letter of the name
+async function paintAvatar(el, p, name) {
+  if (!el) return;
+  const url = await photoUrl(p);
+  el.innerHTML = url
+    ? `<img src="${url}" alt="">`
+    : escapeHtml((name || "?").slice(0, 1).toUpperCase());
+}
+
+// Josh's profile, and Arc's (the partner who is not family)
+const joshProfile = () => profiles.find((p) => (p.name || "").toLowerCase() === "josh") || null;
+const arcProfile = () => profiles.find((p) => (p.name || "").toLowerCase() !== "josh" && !p.is_family) || null;
+
+async function loadProfiles() {
+  if (myId) {
+    // Make sure my own row exists (name and family flag kept current)
+    await supabase.from("profiles").upsert({ id: myId, name: myName, is_family: isFamily }, { onConflict: "id", ignoreDuplicates: false });
+  }
+  const { data } = await supabase.from("profiles").select("*");
+  profiles = data || [];
+  paintAvatar(document.getElementById("me-avatar"), profiles.find((p) => p.id === myId), myName);
+  paintScoreAvatars();
+}
+
+function paintScoreAvatars() {
+  document.querySelectorAll("[data-score-avatar]").forEach((el) => {
+    const who = el.dataset.scoreAvatar;
+    paintAvatar(el, who === "Josh" ? joshProfile() : arcProfile(), who);
+  });
+}
+
+// Shrink any photo to a 320 x 320 square (center crop), as a JPEG
+async function squarePhoto(file) {
+  const img = await createImageBitmap(file);
+  const side = Math.min(img.width, img.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 320;
+  canvas.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 320, 320);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+}
+
+const photoInput = document.createElement("input");
+photoInput.type = "file";
+photoInput.accept = "image/*";
+photoInput.hidden = true;
+document.body.appendChild(photoInput);
+
+const meAvatar = document.getElementById("me-avatar");
+meAvatar.setAttribute("role", "button");
+meAvatar.setAttribute("tabindex", "0");
+meAvatar.setAttribute("aria-label", "Change your photo");
+meAvatar.removeAttribute("aria-hidden");
+meAvatar.addEventListener("click", () => photoInput.click());
+meAvatar.addEventListener("keydown", (e) => { if (e.key === "Enter") photoInput.click(); });
+
+photoInput.addEventListener("change", async () => {
+  const file = photoInput.files?.[0];
+  photoInput.value = "";
+  if (!file || !myId) return;
+  meAvatar.classList.add("busy");
+  try {
+    const blob = await squarePhoto(file);
+    const path = `${myId}.jpg`;
+    const { error } = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+    if (error) throw error;
+    await supabase.from("profiles").upsert({ id: myId, name: myName, is_family: isFamily, avatar_path: path, updated_at: new Date().toISOString() });
+    await loadProfiles();
+  } catch (err) {
+    alert("Couldn't save the photo. Try again.\n" + (err.message || err));
+  } finally {
+    meAvatar.classList.remove("busy");
+  }
+});
 
 // ---------- NEXT TIME TOGETHER ----------
 // One shared row in the next_visit table. Either of you can set it.
@@ -895,7 +988,7 @@ async function loadScores() {
     <div class="card score">
     ${Object.entries(people).map(([name, c]) => `
       <div class="score-row">
-        <span class="score-name">${escapeHtml(name)}</span>
+        <span class="score-name"><span class="avatar small" data-score-avatar="${name}">${name.slice(0, 1)}</span>${escapeHtml(name)}</span>
         <span class="score-cell">${SCORE_ICON.kiss}${c.kiss}</span>
         <span class="score-cell">${SCORE_ICON.hug}${c.hug}</span>
         <span class="score-cell">${SCORE_ICON.punch}${c.punch}</span>
@@ -903,6 +996,7 @@ async function loadScores() {
     </div>
   `;
   el.classList.remove("hidden");
+  paintScoreAvatars();
 }
 
 // ---------- LANDING CELEBRATION ----------
