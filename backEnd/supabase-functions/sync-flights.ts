@@ -241,6 +241,7 @@ async function syncStays(events: any[]) {
         state: s.state,
         lat: where.lat,
         lon: where.lon,
+        tz: (s.state && STATE_TZ[s.state]) || "America/New_York",
         check_in: s.checkIn,
         check_out: s.checkOut,
         updated_at: new Date().toISOString(),
@@ -314,6 +315,9 @@ Deno.serve(async (req) => {
     if (problems.length > 0) {
       await alertJosh("Daily sync: " + problems.join("; "));
     }
+
+    // Heartbeat for the watchdog: the daily sync finished
+    await supabase.from("heartbeats").upsert({ name: "smart-processor", last_ok: new Date().toISOString(), detail: `${problems.length} problems` });
 
     return Response.json({ ok: true, results, problems });
   } catch (err) {

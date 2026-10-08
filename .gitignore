@@ -12,3 +12,9 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# Private: surprise notes, coupons, and family emails (the GitHub repo is public)
+backEnd/supabase-sql/milestone-notes.sql
+backEnd/supabase-sql/coupons.sql
+backEnd/supabase-sql/add-mom.sql
+Claude outputs/

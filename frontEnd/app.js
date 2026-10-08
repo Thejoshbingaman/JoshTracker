@@ -175,6 +175,7 @@ const ICON = {
   plane: (deg = 0) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" transform="rotate(${deg} 12 12)" d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`,
   home: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 11l9-7 9 7M5 10v10h14V10"/></svg>`,
   pin: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></svg>`,
+  clock: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>`,
   bed: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 6v13M3 15h18v4M21 15v-3a2 2 0 0 0-2-2h-8v5"/><circle cx="7" cy="12" r="1.8" fill="currentColor"/></svg>`,
   calendar: `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 10h16M8 3v4M16 3v4"/></svg>`,
 };
@@ -193,14 +194,20 @@ function currentStay() {
   return stays.find((s) => new Date(s.check_in).getTime() <= now && now < new Date(s.check_out).getTime()) || null;
 }
 
-// The hotel stay that covers the night of this day ("2026-10-07"), if any
+// The stay he checked out of earlier today (he is usually still on the road)
+function leftStayToday() {
+  const now = Date.now(), today = dayKeyET(now);
+  return stays.find((s) => dayKeyET(s.check_out) === today && now >= new Date(s.check_out).getTime()) || null;
+}
+
+// The hotel stay for this day ("2026-10-07"), from check-in day through check-out day
 function stayOnNight(dayKey) {
-  return stays.find((s) => dayKeyET(s.check_in) <= dayKey && dayKey < dayKeyET(s.check_out)) || null;
+  return stays.find((s) => dayKeyET(s.check_in) <= dayKey && dayKey <= dayKeyET(s.check_out)) || null;
 }
 
 // A hotel stay wins the headline unless a flight is in the air, just landed, or has a problem
 function stayShowing(hero) {
-  const stay = currentStay();
+  const stay = currentStay() || leftStayToday();
   if (!stay) return null;
   return !hero || phaseOf(hero) === "upcoming" ? stay : null;
 }
@@ -209,7 +216,11 @@ function renderHeadline(hero) {
   let kicker = "", title = "", sub = "";
   const stay = stayShowing(hero);
 
-  if (stay) {
+  if (stay && Date.now() >= new Date(stay.check_out).getTime()) {
+    kicker = "On the road";
+    title = `Josh is heading home from ${stay.city}`;
+    sub = `Checked out at ${formatAt(stay.check_out, null, false)}`;
+  } else if (stay) {
     kicker = "Staying over";
     title = `Josh is in ${stay.city}`;
     sub = `${stay.hotel} · checks out ${formatAt(stay.check_out)}`;
@@ -315,6 +326,38 @@ function renderDistance(hero) {
   const miles = Math.round(milesBetween(pos, homePoint(hero)));
   if (miles < 30) { el.classList.add("hidden"); return; }
   el.innerHTML = `${ICON.pin}<span><strong>${miles.toLocaleString("en-US")}</strong> miles apart</span>`;
+  el.classList.remove("hidden");
+}
+
+// "6:12 PM in Garden City": Josh's own clock, when it differs from Arc's (Eastern)
+function joshClock(hero) {
+  const now = new Date();
+  const et = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE });
+  const fromZone = (tz) => now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+  const fromOffset = (localString) => toAirportClock(now.toISOString(), localString)
+    .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+
+  let time = null, place = "";
+  const stay = stayShowing(hero);
+  const phase = hero ? phaseOf(hero) : null;
+  if (stay && stay.tz) {
+    time = fromZone(stay.tz); place = stay.city;
+  } else if (phase === "air" || phase === "landed") {
+    time = fromOffset(hero.arrivalLocal); place = city(hero.destination);
+  } else if (hero && !HOME_AIRPORTS.includes(hero.origin)) {
+    time = fromOffset(hero.departureLocal); place = city(hero.origin);
+  } else if (!hero) {
+    const last = flights[flights.length - 1];
+    if (last && !HOME_AIRPORTS.includes(last.destination)) { time = fromOffset(last.arrivalLocal); place = city(last.destination); }
+  }
+  return time && time !== et ? { time, place } : null;
+}
+
+function renderJoshClock(hero) {
+  const el = document.getElementById("josh-clock");
+  const c = joshClock(hero);
+  if (!c) { el.classList.add("hidden"); return; }
+  el.innerHTML = `${ICON.clock}<span><strong>${c.time}</strong> in ${escapeHtml(c.place)}</span>`;
   el.classList.remove("hidden");
 }
 
@@ -425,7 +468,7 @@ function renderTimeline() {
   const title = document.getElementById("timeline-title");
 
   const active = flights.filter((f) => phaseOf(f) !== "landed" && phaseOf(f) !== "canceled");
-  const upcomingStays = stays.filter((s) => new Date(s.check_out).getTime() > Date.now());
+  const upcomingStays = stays.filter((s) => dayKeyET(s.check_out) >= dayKeyET(Date.now()));
   if (active.length === 0 && upcomingStays.length === 0) {
     el.classList.add("hidden");
     title.classList.add("hidden");
@@ -450,14 +493,15 @@ function renderTimeline() {
     const stayNight = stayOnNight(key);
     if (todays.length > 0) {
       body = todays.map((f) => `
-        <div class="tl-flight">
+        <div class="tl-flight tl-tap" data-flight="${f.id}" role="button" tabindex="0">
           <span class="tl-route">${f.origin} → ${f.destination}</span>
           <span class="tl-time">${formatAt(departureTime(f), null, false)} · ${f.flightNumber}</span>
         </div>`).join("");
       icon = `<span class="tl-icon fly">${ICON.plane(f0dir(todays[0]))}</span>`;
       where = todays[todays.length - 1].destination;
     } else if (stayNight) {
-      body = `<span class="tl-where">In ${escapeHtml(stayNight.city)} · hotel</span>`;
+      const out = key === dayKeyET(stayNight.check_out);
+      body = `<span class="tl-where tl-tap" data-stay="${stayNight.id}" role="button" tabindex="0">In ${escapeHtml(stayNight.city)} · ${out ? "checkout" : "hotel"}</span>`;
       icon = `<span class="tl-icon">${ICON.bed}</span>`;
     } else if (HOME_AIRPORTS.includes(where)) {
       body = `<span class="tl-where home">Home</span>`;
@@ -474,16 +518,100 @@ function renderTimeline() {
       </div>`);
   }
 
-  el.innerHTML = rows.join("");
+  // Redraw only when something changed, so taps are not lost to the 1-second refresh
+  const html = rows.join("");
+  if (html !== lastTimelineHtml) { el.innerHTML = html; lastTimelineHtml = html; }
   el.classList.remove("hidden");
   title.classList.remove("hidden");
 }
+let lastTimelineHtml = "";
 
 // Plane icon direction for the week list: east-bound points right, west-bound points left
 function f0dir(f) {
   if (f.originLon != null && f.destinationLon != null) return f.destinationLon >= f.originLon ? 90 : -90;
   return 90;
 }
+
+
+// ---------- DETAIL SHEET ----------
+// Tap a flight or hotel in "This week" to see more.
+
+const sheet = document.createElement("div");
+sheet.className = "sheet hidden";
+sheet.innerHTML = `
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true">
+    <div class="sheet-grip"></div>
+    <div id="sheet-body"></div>
+    <button type="button" class="ghost sheet-done" data-close>Done</button>
+  </div>`;
+document.body.appendChild(sheet);
+
+function openSheet(html) {
+  document.getElementById("sheet-body").innerHTML = html;
+  sheet.classList.remove("hidden");
+}
+function closeSheet() { sheet.classList.add("hidden"); }
+sheet.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeSheet(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
+
+const sheetRow = (label, value) => value ? `<div class="sheet-row"><span>${label}</span><strong>${value}</strong></div>` : "";
+
+// "8:10 AM local" when the airport is not on Eastern time
+function airportLocal(utc, localString) {
+  if (!localString) return "";
+  const local = toAirportClock(utc, localString)
+    .toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+  const et = formatAt(utc, null, false);
+  return local === et ? "" : ` <span class="sheet-local">(${local} local)</span>`;
+}
+
+function flightSheet(f) {
+  const phase = phaseOf(f);
+  const mins = Math.round((new Date(arrivalTime(f)) - new Date(departureTime(f))) / 60000);
+  const delay = delayMinutes(f);
+  const status = STATUS_TEXT[f.status] || "Scheduled";
+  return `
+    <p class="sheet-kicker">${f.flightNumber} · ${formatDay(departureTime(f))}</p>
+    <h2 class="sheet-title">${city(f.origin)} → ${city(f.destination)}</h2>
+    <div class="sheet-rows">
+      ${sheetRow("Status", delay && phase === "upcoming" ? `Delayed ${delay} min` : status)}
+      ${sheetRow(phase === "upcoming" ? "Departs" : "Took off", formatAt(departureTime(f), null, false) + airportLocal(departureTime(f), f.departureLocal))}
+      ${sheetRow(phase === "landed" ? "Landed" : "Lands", formatAt(arrivalTime(f), null, false) + airportLocal(arrivalTime(f), f.arrivalLocal))}
+      ${sheetRow("Flight time", mins > 0 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : "")}
+      ${sheetRow("Plane", f.aircraft ? escapeHtml(f.aircraft) : "")}
+      ${sheetRow("Bags", f.baggageBelt ? `Belt ${escapeHtml(f.baggageBelt)}` : "")}
+    </div>
+    <p class="sheet-note">Times are Eastern (your time).</p>`;
+}
+
+function staySheet(s) {
+  const nights = Math.max(1, Math.round(
+    (new Date(dayKeyET(s.check_out)) - new Date(dayKeyET(s.check_in))) / 86400000));
+  const maps = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${s.hotel}, ${s.address || s.city}`)}`;
+  return `
+    <p class="sheet-kicker">Hotel · ${nights} night${nights === 1 ? "" : "s"}</p>
+    <h2 class="sheet-title">${escapeHtml(s.hotel)}</h2>
+    <div class="sheet-rows">
+      ${sheetRow("Where", escapeHtml(`${s.city}, ${s.state || ""}`.replace(/, $/, "")))}
+      ${sheetRow("Check-in", formatAt(s.check_in))}
+      ${sheetRow("Check-out", formatAt(s.check_out))}
+    </div>
+    ${s.address ? `<a class="sheet-link" href="${maps}" target="_blank" rel="noopener">${escapeHtml(s.address)} ↗</a>` : ""}
+    <p class="sheet-note">Check-in and check-out times are the usual 3 PM and 11 AM.</p>`;
+}
+
+function openDetail(target) {
+  const fid = target.closest("[data-flight]")?.dataset.flight;
+  const sid = target.closest("[data-stay]")?.dataset.stay;
+  const f = fid && flights.find((x) => String(x.id) === fid);
+  const s = sid && stays.find((x) => String(x.id) === sid);
+  if (f) openSheet(flightSheet(f));
+  else if (s) openSheet(staySheet(s));
+}
+const timelineEl = document.getElementById("timeline");
+timelineEl.addEventListener("click", (e) => openDetail(e.target));
+timelineEl.addEventListener("keydown", (e) => { if (e.key === "Enter") openDetail(e.target); });
 
 // ---------- MAP ----------
 
@@ -605,6 +733,7 @@ function render() {
   renderHeadline(hero);
   renderClock(hero);
   renderDistance(hero);
+  renderJoshClock(hero);
   renderHero(hero);
   renderHomeCard(hero);
   renderVisit();
@@ -616,9 +745,15 @@ function render() {
 let myName = "";
 const otherName = () => (myName.toLowerCase() === "josh" ? "Arc" : "Josh");
 
+let isFamily = false;   // Mom: tracker only, no kisses, scoreboard, dates, or notes
+
 async function loadMe() {
-  const { data: { user } } = await supabase.auth.getUser();
+  // The saved session is on the phone already, so this needs no network (instant open)
+  const { data: { session } } = await supabase.auth.getSession();
+  const user = session?.user;
   myName = user?.user_metadata?.name || "";
+  isFamily = user?.app_metadata?.role === "family" || location.hash === "#demo-family"; // #demo-family = preview Mom's view
+  document.body.classList.toggle("family", isFamily);
   document.getElementById("me-avatar").textContent = (myName || "?").slice(0, 1).toUpperCase();
   document.getElementById("me-hi").textContent = myName ? `Hi, ${myName}` : "Hi";
   document.getElementById("ping-title").textContent = `Send ${otherName()} something`;
@@ -737,22 +872,27 @@ const SCORE_ICON = {
 };
 
 async function loadScores() {
-  const since = new Date(Date.now() - 7 * 86400000).toISOString();
-  const { data, error } = await supabase.from("pings").select("sender_name, type").gte("created_at", since);
   const el = document.getElementById("score-card");
-  if (error) { el.classList.add("hidden"); return; }
-
-  // Count per person per type
-  const people = {};
-  for (const name of ["Arc", "Josh"]) people[name] = { kiss: 0, hug: 0, punch: 0 };
-  for (const row of data || []) {
-    const name = (row.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
-    people[name] = people[name] || { kiss: 0, hug: 0, punch: 0 };
-    if (people[name][row.type] !== undefined) people[name][row.type]++;
+  // All-time totals. The database counts them, so this stays fast as the numbers grow.
+  const count = (type, josh) => {
+    let q = supabase.from("pings").select("id", { count: "exact", head: true }).eq("type", type);
+    q = josh ? q.ilike("sender_name", "josh") : q.not("sender_name", "ilike", "josh");
+    return q.then(({ count, error }) => { if (error) throw error; return count || 0; });
+  };
+  let people;
+  try {
+    const [ak, ah, ap, jk, jh, jp] = await Promise.all([
+      count("kiss", false), count("hug", false), count("punch", false),
+      count("kiss", true), count("hug", true), count("punch", true),
+    ]);
+    people = { Arc: { kiss: ak, hug: ah, punch: ap }, Josh: { kiss: jk, hug: jh, punch: jp } };
+  } catch {
+    el.classList.add("hidden"); return;
   }
 
   el.innerHTML = `
-    <div class="score-head"><span>Last 7 days</span></div>
+    <h2 class="section-title">All time</h2>
+    <div class="card score">
     ${Object.entries(people).map(([name, c]) => `
       <div class="score-row">
         <span class="score-name">${escapeHtml(name)}</span>
@@ -760,6 +900,7 @@ async function loadScores() {
         <span class="score-cell">${SCORE_ICON.hug}${c.hug}</span>
         <span class="score-cell">${SCORE_ICON.punch}${c.punch}</span>
       </div>`).join("")}
+    </div>
   `;
   el.classList.remove("hidden");
 }
@@ -924,9 +1065,213 @@ async function loadFlights() {
   const since = new Date(Date.now() - 86400000).toISOString();
   const stayRes = await supabase.from("stays").select("*").gt("check_out", since).order("check_in");
   stays = stayRes.error ? [] : stayRes.data; // no stays table yet = no stays
+  saveSnapshot();
   render();
   renderMap(pickHero(flights)); // the map only redraws when new data comes in
   maybeCelebrate(false);
+}
+
+// ---------- COUPON WALLET ----------
+// Unlocked coupons live on a card under the scoreboard. Arc taps one to use it; Josh gets an alert.
+
+let coupons = [];
+async function loadCoupons() {
+  if (isFamily) return;
+  if (location.hash === "#demo-coupons") {
+    coupons = [
+      { id: 1, type: "kiss", count: 50, coupon: "Nails on me", coupon_details: "Good for one nail appointment of your choice. Josh pays.", redeemed_at: null },
+      { id: 4, type: "hug", count: 50, coupon: "Movie night, your pick", coupon_details: "Snacks included. No complaining.", redeemed_at: new Date().toISOString() },
+    ];
+  } else {
+    const { data, error } = await supabase.from("milestones")
+      .select("id, type, count, coupon, coupon_details, redeemed_at")
+      .not("coupon", "is", null).order("unlocked_at");
+    coupons = error ? [] : data;
+  }
+  renderCoupons();
+}
+
+function renderCoupons() {
+  const el = document.getElementById("coupon-card");
+  if (!coupons.length) { el.innerHTML = ""; return; }
+  const open = coupons.filter((c) => !c.redeemed_at).length;
+  const mine = myName.toLowerCase() !== "josh";
+  el.innerHTML = `
+    <h2 class="section-title coupons-title"><span>${mine ? "Your coupons" : `${otherName()}'s coupons`}</span><span>${open} to use</span></h2>
+    <div class="card coupons">
+      ${coupons.map((c) => `
+        <button type="button" class="coupon-row${c.redeemed_at ? " used" : ""}" data-coupon="${c.id}">
+          <span class="coupon-dot"></span>
+          <span class="coupon-name">${escapeHtml(c.coupon)}</span>
+          <span class="coupon-state">${c.redeemed_at ? "Used" : "Ready"}</span>
+        </button>`).join("")}
+    </div>`;
+}
+
+document.getElementById("coupon-card").addEventListener("click", (e) => {
+  const id = e.target.closest("[data-coupon]")?.dataset.coupon;
+  const c = coupons.find((x) => String(x.id) === id);
+  if (!c) return;
+  // Only Arc can cash in. In the #demo-coupons preview, anyone can try it (nothing is saved).
+  const canUse = !c.redeemed_at && (myName.toLowerCase() !== "josh" || location.hash === "#demo-coupons");
+  openSheet(`
+    ${ticketHtml(c)}
+    ${canUse ? `<button type="button" class="coupon-use" data-use="${c.id}">Use it now</button>
+      <p class="sheet-note">Josh gets an alert that you're cashing it in.</p>` : ""}`);
+  const btn = document.querySelector("[data-use]");
+  if (!btn) return;
+  let armed = false;
+  btn.addEventListener("click", async () => {
+    if (!armed) { armed = true; btn.textContent = "Tap again to confirm"; btn.classList.add("armed"); return; }
+    btn.disabled = true; btn.textContent = "Cashing in…";
+    if (location.hash === "#demo-coupons") { c.redeemed_at = new Date().toISOString(); }
+    else {
+      const { data, error } = await supabase.functions.invoke("send-kiss", { body: { redeem: c.id } });
+      if (error || !data?.ok) { btn.disabled = false; btn.textContent = "Didn't work. Try again."; armed = false; return; }
+      c.redeemed_at = new Date().toISOString();
+    }
+    document.getElementById("sheet-body").innerHTML = `${ticketHtml(c)}<p class="sheet-note">Josh got the alert. Enjoy.</p>`;
+    renderCoupons();
+  });
+});
+
+// ---------- APP ICON BADGE ----------
+// A new kiss/hug/punch puts a number on the app icon (set by sw.js). Opening the app clears it.
+function clearBadge() {
+  try { navigator.clearAppBadge?.(); } catch { /* not supported */ }
+  // Also clear ping alerts still sitting in the notification list
+  navigator.serviceWorker?.ready.then((reg) => reg.getNotifications())
+    .then((list) => list.forEach((n) => { if ((n.tag || "").startsWith("ping-")) n.close(); }))
+    .catch(() => {});
+}
+
+// ---------- INSTANT OPEN ----------
+// The last data is saved on the phone, so the app shows it at once,
+// then swaps in fresh data a moment later (or keeps it if there is no signal).
+const SNAPSHOT_KEY = "jt-snapshot-v1";
+function saveSnapshot() {
+  try { localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ flights, stays, at: Date.now() })); } catch { /* storage off */ }
+}
+function showSnapshot() {
+  try {
+    const snap = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || "null");
+    if (!snap || demoMode()) return false;
+    flights = snap.flights || [];
+    stays = snap.stays || [];
+    render();
+    return true;
+  } catch { return false; }
+}
+
+// ---------- REALTIME ----------
+// Supabase tells the open app the moment a row changes, so there is no wait for the next refresh.
+let channel = null;
+function debounce(fn, ms = 400) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
+function startRealtime() {
+  stopRealtime();
+  const flightsChanged = debounce(() => { if (!demoMode()) loadFlights(); });
+  channel = supabase.channel("joshtracker")
+    .on("postgres_changes", { event: "*", schema: "public", table: "flights" }, flightsChanged)
+    .on("postgres_changes", { event: "*", schema: "public", table: "stays" }, flightsChanged);
+  if (!isFamily) {
+    channel
+      .on("postgres_changes", { event: "*", schema: "public", table: "pings" }, debounce(loadScores))
+      .on("postgres_changes", { event: "*", schema: "public", table: "next_visit" }, debounce(loadVisit))
+      .on("postgres_changes", { event: "*", schema: "public", table: "milestones" }, debounce(() => { checkMilestones(); loadCoupons(); }));
+  }
+  channel.subscribe();
+}
+function stopRealtime() {
+  if (channel) { supabase.removeChannel(channel); channel = null; }
+}
+
+// ---------- MILESTONE NOTES ----------
+// When Arc sends her 50th or 100th kiss, hug, or punch, Josh's note for it pops up.
+
+const MILESTONE_WORD = { kiss: ["kiss", "kisses"], hug: ["hug", "hugs"], punch: ["punch", "punches"] };
+const milestoneEl = document.createElement("div");
+milestoneEl.className = "milestone hidden";
+milestoneEl.setAttribute("role", "dialog");
+milestoneEl.setAttribute("aria-modal", "true");
+document.body.appendChild(milestoneEl);
+let milestoneShowing = null;
+
+function showMilestone(m) {
+  if (!m || milestoneShowing) return;
+  milestoneShowing = m;
+  const icon = document.querySelector(`.ping-${m.type} .ping-orb svg`)?.outerHTML || "";
+  const [one, many] = MILESTONE_WORD[m.type] || ["", ""];
+  const floaters = Array.from({ length: 26 }, (_, i) =>
+    `<span class="m-float" style="left:${(i * 37) % 100}%;animation-delay:${(i % 9) * 0.35}s;animation-duration:${4 + (i % 5)}s;--s:${0.6 + (i % 4) * 0.25}">${icon}</span>`).join("");
+  milestoneEl.innerHTML = `
+    <div class="m-floaters" aria-hidden="true">${floaters}</div>
+    <div class="m-inner">
+      <div class="m-badge"><span class="m-icon">${icon}</span></div>
+      <p class="m-kicker">Milestone unlocked</p>
+      <h1 class="m-count"><span class="m-num" data-to="${m.count}">0</span> ${m.count === 1 ? one : many}</h1>
+      <div class="m-card">
+        <p class="m-note">${escapeHtml(m.note).replace(/\n/g, "<br>")}</p>
+        <p class="m-sign">Josh</p>
+      </div>
+      ${m.coupon ? `<div class="m-ticket-wrap">${ticketHtml(m)}</div>` : ""}
+      <button type="button" class="m-close">Here's to the next ${m.count}!</button>
+    </div>`;
+  milestoneEl.classList.remove("hidden");
+  // Count up 0 → 50
+  const num = milestoneEl.querySelector(".m-num");
+  const to = m.count, start = performance.now();
+  const tick = (t) => {
+    const k = Math.min(1, (t - start) / 1400);
+    num.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+    if (k < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  if (navigator.vibrate) navigator.vibrate([60, 40, 60, 40, 120]);
+  milestoneEl.querySelector(".m-close").addEventListener("click", closeMilestone);
+}
+
+// A coupon, drawn as a ticket with notched sides
+function ticketHtml(c, opts = {}) {
+  const used = c.redeemed_at;
+  return `
+    <div class="ticket${used ? " used" : ""}">
+      <div class="ticket-top">
+        <span class="ticket-kicker">Coupon · ${c.count} ${(MILESTONE_WORD[c.type] || ["", ""])[1]}</span>
+        <span class="ticket-title">${escapeHtml(c.coupon)}</span>
+        ${c.coupon_details ? `<span class="ticket-details">${escapeHtml(c.coupon_details)}</span>` : ""}
+      </div>
+      <div class="ticket-bottom">
+        <span>${used ? `Used ${formatDay(c.redeemed_at)}` : "Show this to Josh"}</span>
+        <span class="ticket-no">No. ${String(c.id || 0).padStart(3, "0")}</span>
+      </div>
+      ${used ? `<span class="ticket-stamp">Used</span>` : ""}
+    </div>`;
+}
+
+async function closeMilestone() {
+  const m = milestoneShowing;
+  milestoneEl.classList.add("hidden");
+  milestoneShowing = null;
+  if (m?.id) await supabase.from("milestones").update({ seen_at: new Date().toISOString() }).eq("id", m.id);
+  checkMilestones(); // another one waiting?
+  loadCoupons();
+}
+
+// Preview the screen with a sample note: #demo-milestone-kiss, -hug, or -punch (add -100 for the 100th)
+function previewMilestone() {
+  const m = location.hash.match(/^#demo-milestone-(kiss|hug|punch)(-100)?$/);
+  if (!m) return;
+  showMilestone({ type: m[1], count: m[2] ? 100 : 50,
+    note: "This is a preview. Your real note for this milestone shows here, word for word.\n\nNew lines show like this.",
+    coupon: "Nails on me", coupon_details: "Good for one nail appointment of your choice. Josh pays." });
+}
+
+// Any unlocked note she has not seen yet (e.g. unlocked on another phone)? Only Arc's app shows them.
+async function checkMilestones() {
+  if (isFamily || myName.toLowerCase() === "josh" || milestoneShowing) return;
+  const { data } = await supabase.from("milestones").select("id, type, count, title, note, coupon, coupon_details")
+    .is("seen_at", null).order("unlocked_at").limit(1);
+  if (data?.[0]) showMilestone(data[0]);
 }
 
 // ---------- ALERTS (push notifications) ----------
@@ -996,7 +1341,7 @@ async function refreshAlertsCard() {
     return;
   }
 
-  alertsText.textContent = "Get a ping when Josh departs, lands, or is delayed.";
+  alertsText.textContent = "Get a ping when Josh boards, lands, or is delayed, and when he sends you something.";
   alertsButton.classList.remove("hidden");
   alertsCard.classList.remove("hidden");
 }
@@ -1090,13 +1435,16 @@ pingButtons.forEach((button) => {
 
     const { data, error } = await supabase.functions.invoke("send-kiss", { body: { type } });
 
-    if (error || !data?.ok) {
+    if (data?.error === "Slow down" || error?.context?.status === 429) {
+      pingStatus.textContent = "Easy there. Try again in a minute.";
+    } else if (error || !data?.ok) {
       pingStatus.textContent = "Didn't send. Try again.";
     } else if (data.sent === 0) {
       pingStatus.textContent = "Sent, but no phones have alerts on.";
     } else {
       pingStatus.textContent = PING_DONE[type];
       loadScores();
+      if (data.milestone) setTimeout(() => showMilestone(data.milestone), 600);
     }
 
     // Short cooldown so a button can't be spammed by accident
@@ -1183,7 +1531,79 @@ document.getElementById("open-welcome").addEventListener("click", () => openWelc
 // Called after sign-in: open the note if this account is flagged for it
 async function maybeShowWelcome() {
   const { data: { user } } = await supabase.auth.getUser(); // fresh from the server
-  if (user?.user_metadata?.showWelcome) openWelcome(true);
+  if (user?.user_metadata?.showWelcome && user?.app_metadata?.role !== "family") { openWelcome(true); return; }
+  maybeShowIntro();
+}
+
+// ---------- WHAT'S NEW (Arc) / WELCOME (Mom) ----------
+// Shows once per phone. Change APP_VERSION to show a new "What's new" after a future update.
+
+const APP_VERSION = "3.0";
+const INTRO_ICON = {
+  heart: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 20C7 16 4 13 4 9.5 4 7 6 5 8.3 5c1.6 0 3 1 3.7 2.4"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="0.1 3.2" d="M12 7.4C12.7 6 14.1 5 15.7 5 18 5 20 7 20 9.5c0 3.5-3 6.5-8 10.5"/></svg>`,
+  bed: ICON.bed, cal: ICON.calendar, clock: ICON.clock, pin: ICON.pin, home: ICON.home,
+  plane: ICON.plane(45),
+  bolt: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M13 3L5 13h6l-1 8 8-10h-6l1-8z"/></svg>`,
+  gift: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-1.5-3-5-3-5-1s3 1 5 1zm0 0c1.5-3 5-3 5-1s-3 1-5 1z"/></svg>`,
+};
+
+const introEl = document.createElement("div");
+introEl.className = "welcome intro hidden";
+introEl.setAttribute("role", "dialog");
+introEl.setAttribute("aria-modal", "true");
+document.body.appendChild(introEl);
+
+function introItem(icon, title, text) {
+  return `<li><span class="tour-icon">${icon}</span><div><strong>${title}</strong><span>${text}</span></div></li>`;
+}
+
+function showIntro(kind) {
+  const installed = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const isAndroid = /Android/.test(navigator.userAgent);
+  const body = kind === "mom" ? `
+      <p class="kicker">Welcome</p>
+      <h2>Hi Mom</h2>
+      <p class="intro-lead">Now you can always see where I am and where I'm headed. It updates by itself from my calendar.</p>
+      <ul class="tour">
+        ${introItem(INTRO_ICON.pin, "The headline", "Where I am right now: home, on the road, at a hotel, or in the air.")}
+        ${introItem(INTRO_ICON.clock, "The countdown", "When I take off or land, with any delays, in your time.")}
+        ${introItem(INTRO_ICON.plane, "The map", "My plane moving across the country while I fly.")}
+        ${introItem(INTRO_ICON.home, "Home in", "How long until I'm back home.")}
+        ${introItem(INTRO_ICON.cal, "This week", "Where I'll be each day. Tap a day for the details.")}
+      </ul>
+      ${!installed && isAndroid ? `<p class="welcome-small">Tip: in Chrome, tap ⋮ (top right), then <strong>Install app</strong>. Then open JoshTracker from your home screen.</p>` : ""}
+      <p class="welcome-small">Love, Josh</p>`
+    : `
+      <p class="kicker">JoshTracker ${APP_VERSION}</p>
+      <h2>What's new</h2>
+      <ul class="tour">
+        ${introItem(INTRO_ICON.heart, "A new look", "The new icon is our route: red is where I've been, the dots are my way back to you.")}
+        ${introItem(INTRO_ICON.bed, "Hotel stays", "The app now knows when I'm staying over, even on trips I drive to.")}
+        ${introItem(INTRO_ICON.cal, "Tap for details", "Tap any flight or hotel in This week to see times, places, and a map link.")}
+        ${introItem(INTRO_ICON.clock, "My time", "When I'm in another time zone, you'll see what time it is for me.")}
+        ${introItem(INTRO_ICON.bolt, "Faster", "Opens instantly, even with bad signal, and updates the moment something changes.")}
+        ${introItem(INTRO_ICON.gift, "Keep them coming", "Every kiss, hug, and punch counts. Don't stop now ;)")}
+      </ul>`;
+  introEl.innerHTML = `
+    <div class="welcome-inner">
+      <section class="step">${body}</section>
+      <button type="button" class="intro-done">${kind === "mom" ? "Got it" : "Love it"}</button>
+    </div>`;
+  introEl.classList.remove("hidden");
+  introEl.querySelector(".intro-done").addEventListener("click", () => {
+    introEl.classList.add("hidden");
+    try { localStorage.setItem(`jt-intro-${kind}`, APP_VERSION); } catch { /* storage off */ }
+  });
+}
+
+function maybeShowIntro() {
+  const kind = isFamily ? "mom" : "whatsnew";
+  if (location.hash === "#demo-whatsnew") return showIntro("whatsnew");   // previews
+  if (location.hash === "#demo-momwelcome") return showIntro("mom");
+  if (myName.toLowerCase() === "josh") return;                             // you know what's new
+  let seen = null;
+  try { seen = localStorage.getItem(`jt-intro-${kind}`); } catch { /* storage off */ }
+  if (seen !== APP_VERSION) showIntro(kind);
 }
 
 // ---------- SIGN IN / SIGN OUT ----------
@@ -1191,8 +1611,9 @@ async function maybeShowWelcome() {
 function startTimers() {
   stopTimers();
   timers.push(setInterval(render, 1000));        // update countdowns every second
-  timers.push(setInterval(loadFlights, 60000));  // get fresh data every minute
-  timers.push(setInterval(() => { loadVisit(); loadScores(); }, 60000));
+  // Realtime brings changes at once; this slower refresh is only a safety net
+  timers.push(setInterval(loadFlights, 5 * 60000));
+  if (!isFamily) timers.push(setInterval(() => { loadVisit(); loadScores(); }, 5 * 60000));
 }
 function stopTimers() {
   timers.forEach(clearInterval);
@@ -1205,14 +1626,28 @@ async function showCorrectView() {
     loginView.classList.add("hidden");
     dashboardView.classList.remove("hidden");
     await loadMe();
-    await loadFlights();
-    loadVisit();
-    loadScores();
+    showSnapshot();            // last known data, on screen at once
+    await loadFlights();       // then fresh data
+    if (!isFamily) {
+      loadVisit();
+      loadScores();
+      checkMilestones();
+      loadCoupons();
+    }
     startTimers();
-    await refreshAlertsCard();
-    maybeShowWelcome();
+    startRealtime();
+    previewMilestone();
+    if (!isFamily) {
+      await refreshAlertsCard();
+      maybeShowWelcome();      // the welcome note, or else "What's new"
+    } else {
+      maybeShowIntro();        // Mom's one-time welcome
+    }
+    clearBadge();
   } else {
     stopTimers();
+    stopRealtime();
+    document.body.classList.remove("family");
     dashboardView.classList.add("hidden");
     loginView.classList.remove("hidden");
   }
@@ -1239,7 +1674,10 @@ logoutButton.addEventListener("click", async () => {
 
 // Refresh right away when she comes back to the app
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && timers.length) loadFlights();
+  if (document.hidden || !timers.length) return;
+  clearBadge();
+  loadFlights();
+  if (!isFamily) { loadScores(); loadVisit(); checkMilestones(); }
 });
 
 window.addEventListener("hashchange", () => { if (timers.length) loadFlights(); });

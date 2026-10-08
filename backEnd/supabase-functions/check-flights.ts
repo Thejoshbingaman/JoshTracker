@@ -80,6 +80,8 @@ function shouldCheck(f: any) {
 const FA_BASE = "https://aeroapi.flightaware.com/aeroapi";
 
 async function fa(path: string) {
+  // Log every call so the watchdog can warn before the monthly free limit runs out
+  await supabase.from("api_calls").insert({ api: "flightaware" });
   const res = await fetch(FA_BASE + path, {
     headers: { "x-apikey": Deno.env.get("FLIGHTAWARE_API_KEY")! },
   });
@@ -154,7 +156,10 @@ async function checkFlight(f: any) {
 async function sendToAll(payload: any) {
   const { data: all } = await supabase.from("push_subscriptions").select("*");
   const adminId = Deno.env.get("ADMIN_USER_ID");
-  const others = (all || []).filter((s: any) => s.user_id !== adminId);
+  // Family accounts (Mom) chose no alerts
+  const { data: users } = await supabase.auth.admin.listUsers();
+  const family = new Set((users?.users || []).filter((u: any) => u.app_metadata?.role === "family").map((u: any) => u.id));
+  const others = (all || []).filter((s: any) => s.user_id !== adminId && !family.has(s.user_id));
   const subs = others.length > 0 ? others : (all || []);
   let sent = 0;
   for (const s of subs || []) {
@@ -286,6 +291,9 @@ Deno.serve(async (req) => {
     for (const f of after || []) {
       results.push(...(await alertsFor(f)));
     }
+
+    // Heartbeat for the watchdog: this run finished
+    await supabase.from("heartbeats").upsert({ name: "check-flights", last_ok: new Date().toISOString(), detail: `${due.length} checked` });
 
     return Response.json({ ok: true, results });
   } catch (err) {

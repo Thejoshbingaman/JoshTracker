@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>JoshTracker</title>
-  <link rel="manifest" href="manifest.json?v=2">
+  <link rel="manifest" href="manifest.json?v=3">
   <meta name="theme-color" content="#0b0b0d">
-  <link rel="icon" href="favicon.ico?v=2" sizes="any">
-  <link rel="icon" type="image/png" href="icon-192.png?v=2">
-  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2">
+  <link rel="icon" href="favicon.ico?v=3" sizes="any">
+  <link rel="icon" type="image/png" href="icon-192.png?v=3">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=3">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="JoshTracker">
@@ -22,6 +22,7 @@
 
     <!-- LOGIN SCREEN: shown when nobody is signed in -->
     <section id="login-view" class="card login hidden">
+      <img class="login-logo" src="icon-192.png?v=3" alt="" width="72" height="72">
       <h1>JoshTracker</h1>
       <p class="muted">Sign in to see where Josh is.</p>
       <form id="login-form">
@@ -47,7 +48,7 @@
       <div id="alerts-card" class="card alerts hidden">
         <div>
           <span class="label">Alerts</span>
-          <p id="alerts-text">Get a ping when Josh departs, lands, or is delayed.</p>
+          <p id="alerts-text">Get a ping when Josh boards, lands, or is delayed, and when he sends you something.</p>
         </div>
         <button id="alerts-button" class="small">Turn on</button>
       </div>
@@ -67,6 +68,8 @@
 
       <!-- Miles apart -->
       <p id="distance" class="distance hidden"></p>
+      <!-- Josh's own clock, when he is in another time zone -->
+      <p id="josh-clock" class="distance hidden"></p>
 
       <!-- Flight card: map on top, details below -->
       <div id="flight-card" class="flight-card hidden">
@@ -95,11 +98,14 @@
       </div>
 
       <!-- This week's scoreboard -->
-      <div id="score-card" class="card score hidden"></div>
+      <div id="score-card" class="hidden"></div>
 
       <!-- Next 7 days timeline -->
       <h2 id="timeline-title" class="section-title hidden">This week</h2>
       <div id="timeline" class="card timeline hidden"></div>
+
+      <!-- Milestone coupons (only once one is unlocked) -->
+      <div id="coupon-card"></div>
 
       <p class="footnote">All times are Eastern</p>
       <p class="legal"><button type="button" id="open-welcome" class="link-button">♥ Read Josh's note again</button></p>
@@ -137,13 +143,13 @@
         <p class="kicker">How it works</p>
         <h2>Always know where I am</h2>
         <ul class="tour">
-          <li><span class="tour-icon">✈</span><div><strong>The headline</strong><span>Tells you where I am right now: home, away, or in the air.</span></div></li>
-          <li><span class="tour-icon">⏱</span><div><strong>The flight card</strong><span>Counts down to takeoff and landing, and shows any delays.</span></div></li>
-          <li><span class="tour-icon">◎</span><div><strong>The map</strong><span>Shows my plane moving across the country while I fly.</span></div></li>
-          <li><span class="tour-icon">♥</span><div><strong>Home in</strong><span>Counts down to the minute I land back home.</span></div></li>
-          <li><span class="tour-icon">▦</span><div><strong>This week</strong><span>My whole week at a glance, plus a countdown to our next date.</span></div></li>
+          <li><span class="tour-icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5" fill="currentColor"/></svg></span><div><strong>The headline</strong><span>Tells you where I am right now: home, on the road, at a hotel, or in the air.</span></div></li>
+          <li><span class="tour-icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg></span><div><strong>The countdown</strong><span>Counts down to my next takeoff or landing, and shows any delays.</span></div></li>
+          <li><span class="tour-icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg></span><div><strong>The map</strong><span>Shows my plane moving across the country when I fly.</span></div></li>
+          <li><span class="tour-icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 11l9-7 9 7M5 10v10h14V10"/></svg></span><div><strong>Home in</strong><span>Counts down to the minute I'm back. On driving trips, it counts down to hotel checkout.</span></div></li>
+          <li><span class="tour-icon"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 10h16M8 3v4M16 3v4"/></svg></span><div><strong>This week</strong><span>Where I'll be each day: flights, hotel nights, and home. Tap one for details. Plus a countdown to our next date.</span></div></li>
         </ul>
-        <p class="welcome-small">It updates by itself. My flights come straight from my calendar, so you never have to ask.</p>
+        <p class="welcome-small">It updates by itself. My flights and hotel stays come straight from my calendar, so you never have to ask.</p>
       </section>
 
       <!-- Step 3: alerts -->
