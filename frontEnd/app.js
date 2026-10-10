@@ -576,10 +576,13 @@ sheet.innerHTML = `
 document.body.appendChild(sheet);
 
 function openSheet(html) {
-  document.getElementById("sheet-body").innerHTML = html;
+  const body = document.getElementById("sheet-body");
+  body.innerHTML = html;
+  body.scrollTop = 0;
   sheet.classList.remove("hidden");
+  document.body.classList.add("sheet-open");     // stop the page behind from scrolling
 }
-function closeSheet() { sheet.classList.add("hidden"); }
+function closeSheet() { sheet.classList.add("hidden"); document.body.classList.remove("sheet-open"); }
 sheet.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
 
@@ -1739,28 +1742,53 @@ document.getElementById("map").addEventListener("click", (e) => {
 });
 
 // 4. Shake the phone to send a punch
-let shakeHits = [], lastShake = 0, lastAcc = null, motionOn = false;
+// How it works: each motion reading gives the phone's acceleration. A hard shake makes short
+// spikes well above normal handling. 3 spikes within 1.2 seconds = a shake.
+const SHAKE_FORCE = 13;      // m/s² above normal (about 1.3 g). Lower = easier to trigger.
+let shakeHits = [], lastShake = 0, lastPeak = 0, motionOn = false;
+let shakeDebug = null;       // #demo-shake shows the live readings
 function onMotion(e) {
-  const a = e.accelerationIncludingGravity;
-  if (!a || a.x == null) return;
-  if (lastAcc) {
-    const jolt = Math.abs(a.x - lastAcc.x) + Math.abs(a.y - lastAcc.y) + Math.abs(a.z - lastAcc.z);
-    const now = Date.now();
-    if (jolt > 30) {
-      shakeHits = shakeHits.filter((t) => now - t < 900);
-      shakeHits.push(now);
-      if (shakeHits.length >= 4 && now - lastShake > 6000 && !document.hidden) {
-        lastShake = now; shakeHits = [];
-        const punch = document.querySelector(".ping-punch");
-        if (punch && !punch.disabled && !isFamily && dashboardView && !dashboardView.classList.contains("hidden")) {
-          punch.click();
-          eggFound("shake");
-        }
-      }
-    }
+  let force;
+  const a = e.acceleration;                         // without gravity (most phones)
+  if (a && a.x != null) force = Math.hypot(a.x, a.y, a.z);
+  else {
+    const g = e.accelerationIncludingGravity;       // with gravity: subtract 9.8
+    if (!g || g.x == null) return;
+    force = Math.abs(Math.hypot(g.x, g.y, g.z) - 9.81);
   }
-  lastAcc = { x: a.x, y: a.y, z: a.z };
+  const now = Date.now();
+  if (shakeDebug) shakeDebug.update(force, shakeHits.length);
+  if (force < SHAKE_FORCE || now - lastPeak < 120) return;   // one count per spike
+  lastPeak = now;
+  shakeHits = shakeHits.filter((t) => now - t < 1200);
+  shakeHits.push(now);
+  if (shakeHits.length < 3 || now - lastShake < 6000 || document.hidden) return;
+  lastShake = now; shakeHits = [];
+  if (shakeDebug) shakeDebug.fired();
+  const punch = document.querySelector(".ping-punch");
+  if (isFamily || !punch || dashboardView.classList.contains("hidden")) return;
+  if (punch.disabled) { eggToast("Shake again in a few seconds"); return; }
+  punch.click();
+  eggFound("shake");
 }
+
+// #demo-shake: a small readout to check the phone's motion sensor
+function showShakeDebug() {
+  const el = document.createElement("div");
+  el.className = "shake-debug";
+  el.innerHTML = `<strong>Shake test</strong><span class="sd-force">waiting for sensor…</span><span class="sd-hits"></span>`;
+  document.body.appendChild(el);
+  let peak = 0;
+  shakeDebug = {
+    update(f, hits) {
+      peak = Math.max(peak * 0.98, f);
+      el.querySelector(".sd-force").textContent = `force ${f.toFixed(1)} · peak ${peak.toFixed(1)} (needs ${SHAKE_FORCE})`;
+      el.querySelector(".sd-hits").textContent = `spikes ${hits}/3`;
+    },
+    fired() { el.classList.add("hit"); setTimeout(() => el.classList.remove("hit"), 800); },
+  };
+}
+
 function startMotion() {
   if (motionOn || isFamily) return;
   motionOn = true;
@@ -2186,6 +2214,7 @@ async function showCorrectView() {
       loadEggs();
       if (location.hash === "#demo-birthday") maybeBirthday(true); else maybeBirthday();
       if (location.hash === "#demo-nightowl") maybeNightOwl(true); else maybeNightOwl();
+      if (location.hash === "#demo-shake") { showShakeDebug(); askMotion(); }
       if (location.hash === "#demo-ko") showKO();
       if (location.hash === "#demo-storm") showKissStorm();
     }

@@ -834,3 +834,15 @@ form { display: flex; flex-direction: column; gap: 12px; }
   .ko-inner, .ko-word, .ko-stars, .storm-heart, .storm-word, .owl-star, .owl-moon { animation: none !important; }
 }
 @keyframes stay-pop { 0% { transform: scale(0) rotate(-12deg); opacity: 0; } 100% { transform: scale(1) rotate(-6deg); opacity: 1; } }
+
+.shake-debug { position: fixed; left: 12px; right: 12px; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 3000;
+  display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 14px;
+  background: #1c1c20; border: 1px solid var(--line-2); font-family: var(--font-mono); font-size: 13px; color: var(--muted); }
+.shake-debug strong { color: var(--text); font-family: var(--font-ui); }
+.shake-debug.hit { border-color: var(--red); box-shadow: 0 0 24px var(--red); }
+
+/* Sheets taller than the screen scroll inside themselves; the Done button stays visible */
+.sheet-panel { max-height: 88vh; max-height: 88dvh; display: flex; flex-direction: column; }
+#sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; margin: 0 -22px; padding: 0 22px; }
+.sheet-done { flex-shrink: 0; }
+body.sheet-open { overflow: hidden; }
