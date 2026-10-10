@@ -16,7 +16,9 @@ const CITY = {
   HOU: "Houston", PHX: "Phoenix", LAS: "Las Vegas", MCO: "Orlando", TPA: "Tampa",
   BNA: "Nashville", ATL: "Atlanta", SAN: "San Diego", OAK: "Oakland", SJC: "San Jose",
   SMF: "Sacramento", AUS: "Austin", MSY: "New Orleans", FLL: "Fort Lauderdale",
-  MCI: "Kansas City", SAT: "San Antonio", SEA: "Seattle", PDX: "Portland",
+  MCI: "Kansas City", SAT: "San Antonio", SEA: "Seattle",
+  CHS: "Charleston", GSP: "Greenville", CAE: "Columbia", MYR: "Myrtle Beach", RDU: "Raleigh", CLT: "Charlotte",
+  ISP: "Long Island", LGA: "New York", EWR: "Newark", BOS: "Boston", PIT: "Pittsburgh", CLE: "Cleveland", PDX: "Portland",
   SLC: "Salt Lake City", CLE: "Cleveland", CMH: "Columbus", PIT: "Pittsburgh",
   IND: "Indianapolis", MKE: "Milwaukee", RDU: "Raleigh", CLT: "Charlotte",
   BOS: "Boston", LGA: "New York", DCA: "Washington", IAD: "Washington",
@@ -481,7 +483,33 @@ function renderTimeline() {
   let where = active.length ? active[0].origin : HOME_AIRPORTS[0];
   const rows = [];
 
-  for (let i = 0; i < 7; i++) {
+  // How many days to show: 7 normally. When Josh is away, stretch through the day he gets home (21 max).
+  const MAX_DAYS = 21;
+  const dayIndex = (t) => {
+    const k = dayKeyET(t);
+    if (k < dayKeyET(today)) return -1;
+    for (let i = 0; i < MAX_DAYS; i++) if (dayKeyET(today.getTime() + i * 86400000) === k) return i;
+    return MAX_DAYS;
+  };
+  let days = 7;
+  const reach = (t) => { days = Math.max(days, Math.min(MAX_DAYS, dayIndex(t) + 1)); };
+  const homeFlightAfter = (t) => active.find((g) => departureTime(g) > t && HOME_AIRPORTS.includes(g.destination));
+  for (let pass = 0; pass < 2; pass++) {
+    // Away right now: show through the flight home
+    if (!HOME_AIRPORTS.includes(where)) { const h = homeFlightAfter(new Date(0).toISOString()); if (h) reach(departureTime(h)); }
+    // A trip that starts inside the window: show through its flight home
+    for (const f of active) {
+      if (dayIndex(departureTime(f)) < days && !HOME_AIRPORTS.includes(f.destination)) {
+        const h = homeFlightAfter(departureTime(f));
+        if (h) reach(departureTime(h));
+      }
+    }
+    // A hotel stay that starts inside the window: show through checkout
+    for (const st of stays) if (dayIndex(st.check_in) < days) reach(st.check_out);
+  }
+  title.textContent = days <= 7 ? "This week" : days <= 14 ? "Next 2 weeks" : "Until Josh is home";
+
+  for (let i = 0; i < days; i++) {
     const day = new Date(today.getTime() + i * 86400000);
     const key = dayKeyET(day);
     const todays = active.filter((f) => dayKeyET(departureTime(f)) === key);
@@ -660,6 +688,34 @@ function airportIcon(code) {
   });
 }
 
+// ---------- State borders ----------
+let statesLayer = null;
+let mapHero = null;
+
+// Is a point inside a state's shape? (ray casting: count how many edges a line to the right crosses)
+function inRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function inState(lat, lon, geometry) {
+  const polys = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  return polys.some((poly) => inRing(lon, lat, poly[0]) && !poly.slice(1).some((hole) => inRing(lon, lat, hole)));
+}
+
+// Faint borders everywhere; the two states of this flight glow red
+function stateStyle(feature) {
+  const h = mapHero;
+  const lit = h && h.originLat != null &&
+    (inState(h.originLat, h.originLon, feature.geometry) || inState(h.destinationLat, h.destinationLon, feature.geometry));
+  return lit
+    ? { color: "#ff4545", weight: 1.2, opacity: 0.55, fill: true, fillColor: "#ff4545", fillOpacity: 0.08 }
+    : { color: "#ffffff", weight: 0.7, opacity: 0.16, fill: false };
+}
+
 function renderMap(hero) {
   const card = document.getElementById("map-card");
 
@@ -678,8 +734,15 @@ function renderMap(hero) {
       attribution: "Tiles &copy; Esri",
       maxZoom: 12,
     }).addTo(map);
+    // State borders sit under the route lines (their own layer, below the default overlay layer)
+    map.createPane("states").style.zIndex = 350;
+    fetch("us-states.json").then((r) => r.json()).then((geo) => {
+      statesLayer = L.geoJSON(geo, { pane: "states", interactive: false, style: stateStyle }).addTo(map);
+    }).catch(() => { /* no borders if the file can't load */ });
     mapLayers = L.layerGroup().addTo(map);
   }
+  mapHero = hero;
+  if (statesLayer) statesLayer.setStyle(stateStyle);
   map.invalidateSize();
   mapLayers.clearLayers();
 
@@ -1539,6 +1602,7 @@ pingButtons.forEach((button) => {
       pingStatus.textContent = "Sent, but no phones have alerts on.";
     } else {
       pingStatus.textContent = PING_DONE[type];
+      afterPing(type);
       loadScores();
       if (data.milestone) setTimeout(() => showMilestone(data.milestone), 600);
     }
@@ -1559,10 +1623,14 @@ pingButtons.forEach((button) => {
 //   roll   tap the plane on the map 5 times
 //   shake  shake the phone to send a punch
 //   meter  press and hold the "Live" chip
+//   night  open the app between 2 and 4 AM
+//   ko     10 punches within a minute
+//   storm  10 kisses within a minute
 // Plus birthday mode on her birthday (set in the secrets table).
 
-const EGG_TOTAL = 5;
+const EGG_TOTAL = 8;
 let eggsFound = new Set();
+let eggDates = {};          // egg -> when it was found
 let secrets = null;
 
 async function loadSecrets() {
@@ -1577,8 +1645,9 @@ async function loadEggs() {
   if (isFamily) return;
   const who = myName.toLowerCase() === "josh" ? arcProfile()?.id : myId;
   if (!who) return renderEggCounter();
-  const { data } = await supabase.from("easter_eggs").select("egg").eq("user_id", who);
+  const { data } = await supabase.from("easter_eggs").select("egg, found_at").eq("user_id", who);
   eggsFound = new Set((data || []).map((r) => r.egg));
+  eggDates = Object.fromEntries((data || []).map((r) => [r.egg, r.found_at]));
   renderEggCounter();
 }
 
@@ -1603,11 +1672,14 @@ function eggToast(text) {
   eggToast.t = setTimeout(() => toastEl.classList.add("hidden"), 3200);
 }
 
-async function eggFound(key) {
+async function eggFound(key, always = false) {
   if (isFamily) return;
   const mine = myName.toLowerCase() !== "josh";
-  if (mine && eggsFound.has(key)) return;           // already found: no repeat toast
-  if (mine) { eggsFound.add(key); renderEggCounter(); eggToast(`Easter egg found · ${eggsFound.size} of ${EGG_TOTAL}`); }
+  if (mine && eggsFound.has(key)) {                 // already found: no repeat toast
+    if (always && !location.hash.startsWith("#demo")) supabase.functions.invoke("send-kiss", { body: { egg: key } }).catch(() => {});
+    return;
+  }
+  if (mine) { eggsFound.add(key); eggDates[key] = new Date().toISOString(); renderEggCounter(); eggToast(`Easter egg found · ${eggsFound.size} of ${EGG_TOTAL}`); }
   if (location.hash.startsWith("#demo")) return;    // previews save nothing
   supabase.functions.invoke("send-kiss", { body: { egg: key } }).catch(() => {});
 }
@@ -1754,6 +1826,153 @@ function showLoveMeter() {
   el.addEventListener("click", () => el.remove());
   if (!isFamily) eggFound("meter");
 }
+
+
+
+// 7 + 8. K.O. and Kiss storm: 10 punches (or kisses) sent within a minute
+const sentTimes = { kiss: [], hug: [], punch: [] };
+function afterPing(type) {
+  const now = Date.now();
+  sentTimes[type] = (sentTimes[type] || []).filter((t) => now - t < 60000);
+  sentTimes[type].push(now);
+  if (sentTimes[type].length >= 10) {
+    sentTimes[type] = [];
+    if (type === "punch") showKO();
+    if (type === "kiss") showKissStorm();
+  }
+}
+
+function showKO() {
+  const stars = Array.from({ length: 5 }, (_, i) =>
+    `<span class="ko-star" style="--a:${i * 72}deg">★</span>`).join("");
+  const el = document.createElement("div");
+  el.className = "ko";
+  el.innerHTML = `
+    <div class="ko-inner">
+      <div class="ko-stars">${stars}</div>
+      <span class="ko-word">K.O.!</span>
+      <span class="ko-sub">Josh is down for the count</span>
+      <span class="ko-count">10 · 9 · 8 · 7 · …</span>
+    </div>`;
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate([200, 60, 200, 60, 400]);
+  el.addEventListener("click", () => el.remove());
+  setTimeout(() => el.remove(), 4200);
+  eggFound("ko", true);
+}
+
+function showKissStorm() {
+  const heart = document.querySelector(".ping-kiss .ping-orb svg")?.outerHTML || "♥";
+  const hearts = Array.from({ length: 60 }, (_, i) =>
+    `<span class="storm-heart" style="left:${(i * 53) % 100}%;animation-delay:${(i % 15) * 0.12}s;animation-duration:${1.8 + (i % 6) * 0.35}s;--s:${0.5 + (i % 5) * 0.3};--r:${(i * 37) % 60 - 30}deg">${heart}</span>`).join("");
+  const el = document.createElement("div");
+  el.className = "storm";
+  el.innerHTML = `${hearts}<div class="storm-text"><span class="storm-word">Kiss storm</span><span class="storm-sub">Josh's phone is having a moment</span></div>`;
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate([30, 30, 30, 30, 30, 30, 30, 30, 200]);
+  el.addEventListener("click", () => el.remove());
+  setTimeout(() => el.remove(), 4500);
+  eggFound("storm", true);
+}
+
+// 9. Night owl: opening the app between 2 and 4 AM (on her phone's clock), once a night
+function maybeNightOwl(force = false) {
+  if (isFamily) return;
+  const now = new Date();
+  if (!force && (now.getHours() < 2 || now.getHours() >= 4)) return;
+  const night = now.toDateString();
+  let shown = null;
+  try { shown = localStorage.getItem("jt-nightowl"); } catch { /* storage off */ }
+  if (!force && shown === night) return;
+  try { localStorage.setItem("jt-nightowl", night); } catch { /* storage off */ }
+  const twinkles = Array.from({ length: 40 }, (_, i) =>
+    `<span class="owl-star" style="left:${(i * 47) % 100}%;top:${(i * 29) % 70}%;animation-delay:${(i % 10) * 0.3}s"></span>`).join("");
+  const el = document.createElement("div");
+  el.className = "owl";
+  el.innerHTML = `
+    ${twinkles}
+    <div class="owl-inner">
+      <svg class="owl-moon" viewBox="0 0 24 24" aria-hidden="true"><path fill="#ffe7a3" d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+      <p class="owl-time">${now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</p>
+      <h1 class="owl-title">Why are you awake?</h1>
+      <p class="owl-text">Go to sleep. I'll still be here in the morning.</p>
+      <p class="owl-sign">— Josh</p>
+      <button type="button" class="owl-close">Okay, goodnight</button>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector(".owl-close").addEventListener("click", () => el.remove());
+  eggFound("night");
+}
+
+// The list of eggs: tap the counter line to open it
+const EGG_LIST = [
+  { key: "note",  name: "Secret note",  how: "Tap the headline 7 times.",          does: "Opens a hidden note from Josh.",       hint: "The headline has more to say. Be persistent." },
+  { key: "combo", name: "The combo",    how: "Tap Kiss, Hug, Punch fast, in order.", does: "COMBO!",                              hint: "Some things are better in the right order." },
+  { key: "roll",  name: "Barrel roll",  how: "Tap the plane on the map 5 times.",  does: "The plane does a loop-the-loop.",      hint: "Pilots love to show off." },
+  { key: "shake", name: "Shake punch",  how: "Shake your phone.",                  does: "Sends Josh a punch.",                  hint: "Sometimes you just want to shake him." },
+  { key: "meter", name: "Love meter",   how: "Press and hold the Live chip.",      does: "Measures how much Josh is thinking about you.", hint: "Hold on to what's live." },
+  { key: "night", name: "Night owl",    how: "Open the app between 2 and 4 AM.",   does: "Josh tells you to go to sleep.",       hint: "Some things only happen when you should be asleep." },
+  { key: "ko",    name: "K.O.",         how: "Send 10 punches within a minute.",   does: "Knocks Josh out cold.",                hint: "Float like a butterfly…" },
+  { key: "storm", name: "Kiss storm",   how: "Send 10 kisses within a minute.",    does: "A storm of hearts, and Josh hears about it.", hint: "Some days one kiss isn't enough." },
+];
+
+function birthdaySeen() {
+  try { return !!localStorage.getItem("jt-birthday"); } catch { return false; }
+}
+
+function openEggList() {
+  const josh = myName.toLowerCase() === "josh";
+  const lock = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></svg>`;
+  const egg = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 3c3.6 0 6.5 5.4 6.5 10a6.5 6.5 0 0 1-13 0C5.5 8.4 8.4 3 12 3z"/></svg>`;
+  const rows = EGG_LIST.map((e) => {
+    const found = eggsFound.has(e.key);
+    const when = found && eggDates[e.key] ? ` · found ${formatDay(eggDates[e.key])}` : "";
+    if (found) {
+      return `<button type="button" class="egg-row${found ? " found" : ""}" data-egg="${e.key}">
+        <span class="egg-icon">${found ? egg : lock}</span>
+        <span class="egg-text"><strong>${e.name}</strong><span>${e.how} ${e.does}${when}</span></span>
+      </button>`;
+    }
+    return `<div class="egg-row locked">
+        <span class="egg-icon">${lock}</span>
+        <span class="egg-text"><strong>???</strong><span>${e.hint}</span></span>
+      </div>`;
+  }).join("");
+  const bday = birthdaySeen();
+  const bonus = `<div class="egg-row bonus${bday ? " found" : " locked"}">
+      <span class="egg-icon">${bday ? egg : lock}</span>
+      <span class="egg-text"><strong>${bday ? "Birthday mode" : "A special day"}</strong><span>${bday ? "On your birthday, the whole app celebrates." : "Wait for it."}</span></span>
+    </div>`;
+  openSheet(`
+    <p class="sheet-kicker">${josh ? `${otherName()} has found ${eggsFound.size} of ${EGG_TOTAL}` : `${eggsFound.size} of ${EGG_TOTAL} found`}</p>
+    <h2 class="sheet-title">Easter eggs</h2>
+    <div class="egg-list">${rows}${bonus}</div>
+    ${josh ? "" : `<p class="sheet-note">Tap one you've found to see it again.</p>`}`);
+}
+
+// Replay a found egg from the list
+document.getElementById("sheet-body").addEventListener("click", (e) => {
+  const key = e.target.closest(".egg-row.found[data-egg]")?.dataset.egg;
+  if (!key) return;
+  closeSheet();
+  if (key === "note") { for (let i = 0; i < 7; i++) document.getElementById("headline-title").click(); }
+  else if (key === "combo") showCombo();
+  else if (key === "meter") showLoveMeter();
+  else if (key === "night") maybeNightOwl(true);
+  else if (key === "ko") showKO();
+  else if (key === "storm") showKissStorm();
+  else if (key === "roll") {
+    const plane = document.querySelector(".map-plane");
+    if (plane) { plane.classList.remove("roll"); void plane.offsetWidth; plane.classList.add("roll"); plane.scrollIntoView({ behavior: "smooth", block: "center" }); }
+    else eggToast("Only while Josh is flying");
+  } else if (key === "shake") eggToast("Shake your phone to punch Josh");
+});
+
+const eggCounterEl = document.getElementById("egg-counter");
+eggCounterEl.setAttribute("role", "button");
+eggCounterEl.setAttribute("tabindex", "0");
+eggCounterEl.addEventListener("click", openEggList);
+eggCounterEl.addEventListener("keydown", (e) => { if (e.key === "Enter") openEggList(); });
 
 // 6. Birthday mode: on her birthday (Eastern), once that day
 async function maybeBirthday(force = false) {
@@ -1966,6 +2185,9 @@ async function showCorrectView() {
       loadCoupons();
       loadEggs();
       if (location.hash === "#demo-birthday") maybeBirthday(true); else maybeBirthday();
+      if (location.hash === "#demo-nightowl") maybeNightOwl(true); else maybeNightOwl();
+      if (location.hash === "#demo-ko") showKO();
+      if (location.hash === "#demo-storm") showKissStorm();
     }
     startTimers();
     startRealtime();
@@ -2009,6 +2231,7 @@ logoutButton.addEventListener("click", async () => {
 document.addEventListener("visibilitychange", () => {
   if (document.hidden || !timers.length) return;
   clearBadge();
+  maybeNightOwl();
   loadFlights();
   if (!isFamily) { loadScores(); loadVisit(); checkMilestones(); }
 });

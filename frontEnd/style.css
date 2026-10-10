@@ -769,3 +769,68 @@ form { display: flex; flex-direction: column; gap: 12px; }
 .live, #headline-title { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .egg-toast { white-space: nowrap; }
 .combo { background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0.75), rgba(0,0,0,0.35) 60%, transparent 80%); animation: fade-in 0.15s ease; }
+
+/* ---------- Easter egg list ---------- */
+.egg-count { cursor: pointer; text-decoration: underline dotted rgba(255, 176, 176, 0.5); text-underline-offset: 4px; }
+.egg-list { display: flex; flex-direction: column; }
+.egg-row {
+  display: flex; align-items: flex-start; gap: 14px; width: 100%; text-align: left;
+  padding: 14px 0; border: none; border-top: 1px solid var(--line); border-radius: 0;
+  background: none; box-shadow: none; color: var(--text); font: inherit;
+}
+.egg-row:first-child { border-top: none; }
+.egg-icon {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center;
+  background: rgba(255, 255, 255, 0.05); color: var(--faint);
+}
+.egg-row.found .egg-icon { background: rgba(255, 69, 69, 0.16); color: var(--red-soft); }
+.egg-text { display: flex; flex-direction: column; gap: 3px; }
+.egg-text strong { font-size: 15px; font-weight: 600; }
+.egg-text span { font-size: 13px; line-height: 1.45; color: var(--muted); }
+.egg-row.locked { opacity: 0.5; }
+.egg-row.locked .egg-text span { font-style: italic; }
+.egg-row.found { cursor: pointer; }
+.egg-row.bonus { border-top: 1px dashed var(--line-2); margin-top: 4px; }
+
+/* ---------- K.O. ---------- */
+.ko { position: fixed; inset: 0; z-index: 2950; display: grid; place-items: center;
+  background: radial-gradient(circle, rgba(60, 0, 0, 0.85), rgba(0, 0, 0, 0.92)); animation: ko-hit 0.35s ease; }
+@keyframes ko-hit { 0% { background-color: #fff; } 100% { background-color: transparent; } }
+.ko-inner { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; animation: ko-shake 0.5s ease 2; }
+@keyframes ko-shake { 0%,100% { transform: translate(0,0) rotate(0); } 20% { transform: translate(-8px,4px) rotate(-3deg); } 40% { transform: translate(8px,-4px) rotate(3deg); } 60% { transform: translate(-6px,2px); } 80% { transform: translate(6px,-2px); } }
+.ko-word { font-size: 110px; font-weight: 900; font-style: italic; letter-spacing: -0.05em; color: #ffd84a;
+  text-shadow: 6px 6px 0 var(--red-deep), 0 0 40px rgba(255, 69, 69, 0.8); animation: stay-pop 0.6s cubic-bezier(.2,1.6,.4,1) both; }
+.ko-sub { font-size: 16px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #fff; }
+.ko-count { font-family: var(--font-mono); font-size: 14px; color: var(--muted); }
+.ko-stars { position: absolute; top: -40px; left: 50%; width: 0; height: 0; animation: ko-spin 1.2s linear infinite; }
+.ko-star { position: absolute; color: #ffd84a; font-size: 26px; transform: rotate(var(--a)) translateX(70px) rotate(calc(-1 * var(--a))); }
+@keyframes ko-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Kiss storm ---------- */
+.storm { position: fixed; inset: 0; z-index: 2950; overflow: hidden; background: rgba(40, 0, 10, 0.55); animation: fade-in 0.2s ease; }
+.storm-heart { position: absolute; top: -60px; width: 40px; height: 40px; transform: scale(var(--s)) rotate(var(--r));
+  animation-name: storm-fall; animation-timing-function: cubic-bezier(.4, 0, .9, .6); animation-iteration-count: 2; }
+.storm-heart svg { width: 100%; height: 100%; }
+@keyframes storm-fall { to { transform: translateY(115vh) scale(var(--s)) rotate(calc(var(--r) * -2)); } }
+.storm-text { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+.storm-word { font-size: 60px; font-weight: 900; letter-spacing: -0.04em; color: #fff; text-shadow: 0 0 30px var(--rose), 0 0 60px var(--red); animation: stay-pop 0.6s cubic-bezier(.2,1.6,.4,1) both; }
+.storm-sub { font-size: 14px; font-weight: 600; color: #ffd1dc; }
+
+/* ---------- Night owl ---------- */
+.owl { position: fixed; inset: 0; z-index: 2700; display: grid; place-items: center; overflow: hidden;
+  background: radial-gradient(600px 500px at 50% 20%, #1b2346, #07080f 70%); animation: fade-in 0.6s ease; }
+.owl-star { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff; opacity: 0.2; animation: twinkle 2.4s ease-in-out infinite; }
+@keyframes twinkle { 50% { opacity: 0.9; } }
+.owl-inner { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px; text-align: center; }
+.owl-moon { width: 84px; height: 84px; filter: drop-shadow(0 0 30px rgba(255, 231, 163, 0.6)); animation: owl-float 4s ease-in-out infinite; }
+@keyframes owl-float { 50% { transform: translateY(-8px) rotate(-6deg); } }
+.owl-time { font-family: var(--font-mono); font-size: 14px; color: #9aa6d8; }
+.owl-title { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; color: #eef1ff; }
+.owl-text { font-size: 17px; line-height: 1.5; color: #c3cae8; max-width: 300px; }
+.owl-sign { font-size: 15px; color: #ffe7a3; }
+.owl-close { margin-top: 14px; padding: 14px 30px; background: #ffe7a3; color: #1b2346; box-shadow: 0 0 30px rgba(255, 231, 163, 0.35); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ko-inner, .ko-word, .ko-stars, .storm-heart, .storm-word, .owl-star, .owl-moon { animation: none !important; }
+}
+@keyframes stay-pop { 0% { transform: scale(0) rotate(-12deg); opacity: 0; } 100% { transform: scale(1) rotate(-6deg); opacity: 1; } }

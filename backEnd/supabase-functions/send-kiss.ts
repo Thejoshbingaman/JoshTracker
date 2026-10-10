@@ -91,7 +91,13 @@ Deno.serve(async (req) => {
     // Found an easter egg: {"egg": "combo"}. Saved once; Josh gets an alert when Arc finds one.
     const EGGS: Record<string, string> = {
       note: "the secret note", combo: "the combo", roll: "the barrel roll",
-      shake: "the shake punch", meter: "the love meter",
+      shake: "the shake punch", meter: "the love meter", night: "the night owl",
+      ko: "the K.O.", storm: "the kiss storm",
+    };
+    // These two alert Josh every time, not just the first time
+    const EVERY_TIME: Record<string, { title: string; body: string }> = {
+      ko: { title: `${name} knocked you out`, body: "10 punches in a minute. Down for the count." },
+      storm: { title: `${name} is being very needy right now`, body: "10 kisses in a minute. Kiss storm incoming." },
     };
     if (body.egg) {
       if (!EGGS[body.egg]) return Response.json({ ok: false, error: "Unknown egg" }, { status: 400, headers: cors });
@@ -100,6 +106,10 @@ Deno.serve(async (req) => {
         .select("egg");
       const { count: found } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true }).eq("user_id", user.id);
       const isNew = (added || []).length > 0;
+      if (EVERY_TIME[body.egg] && !isJosh) {
+        const { data: joshSubs } = await admin.from("push_subscriptions").select("*").eq("user_id", adminId);
+        await push(joshSubs || [], { ...EVERY_TIME[body.egg], tag: `egg-${body.egg}-${Date.now()}` });
+      }
       if (isNew && !isJosh) {
         const { data: joshSubs } = await admin.from("push_subscriptions").select("*").eq("user_id", adminId);
         await push(joshSubs || [], {

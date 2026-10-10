@@ -19,6 +19,8 @@ const CITY: Record<string, string> = {
   PHX: "Phoenix", LAS: "Las Vegas", MCO: "Orlando", TPA: "Tampa", BNA: "Nashville",
   ATL: "Atlanta", SAN: "San Diego", AUS: "Austin", MSY: "New Orleans",
   FLL: "Fort Lauderdale", MCI: "Kansas City", SAT: "San Antonio", SEA: "Seattle",
+  CHS: "Charleston", GSP: "Greenville", CAE: "Columbia", MYR: "Myrtle Beach", RDU: "Raleigh", CLT: "Charlotte",
+  ISP: "Long Island", LGA: "New York", EWR: "Newark", BOS: "Boston", PIT: "Pittsburgh", CLE: "Cleveland",
 };
 const city = (code: string) => CITY[code] || code;
 

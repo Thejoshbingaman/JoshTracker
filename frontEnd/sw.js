@@ -5,11 +5,11 @@
 // The app's own files are saved on the phone. Each open asks the network first
 // (so updates arrive), but if the network is slow or gone, the saved copy shows within 2 seconds.
 
-const APP_CACHE = "joshtracker-app-v1";
+const APP_CACHE = "joshtracker-app-v2";
 const SCOPE = self.registration.scope;
 const APP_FILES = [
   "./", "index.html", "style.css", "app.js", "config.js", "manifest.json",
-  "icon-192.png?v=3", "icon-512.png?v=3", "badge-96.png?v=3", "favicon.ico?v=3",
+  "icon-192.png?v=3", "icon-512.png?v=3", "badge-96.png?v=3", "favicon.ico?v=3", "us-states.json",
 ].map((f) => new URL(f, SCOPE).href);
 
 self.addEventListener("install", (event) => {
