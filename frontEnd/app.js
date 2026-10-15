@@ -1605,9 +1605,10 @@ pingButtons.forEach((button) => {
       pingStatus.textContent = "Sent, but no phones have alerts on.";
     } else {
       pingStatus.textContent = PING_DONE[type];
-      afterPing(type);
       loadScores();
       if (data.milestone) setTimeout(() => showMilestone(data.milestone), 600);
+      if (data.ko) setTimeout(showKO, 300);           // her 10th punch today
+      if (data.storm) setTimeout(showKissStorm, 300); // her 10th kiss today
     }
 
     // Short cooldown so a button can't be spammed by accident
@@ -1624,14 +1625,15 @@ pingButtons.forEach((button) => {
 //   note   tap the headline 7 times
 //   combo  tap Kiss, Hug, Punch in order, fast
 //   roll   tap the plane on the map 5 times
-//   shake  shake the phone to send a punch
 //   meter  press and hold the "Live" chip
 //   night  open the app between 2 and 4 AM
 //   ko     10 punches within a minute
 //   storm  10 kisses within a minute
 // Plus birthday mode on her birthday (set in the secrets table).
 
-const EGG_TOTAL = 8;
+// 7 eggs, plus the retired shake punch if she found it before it was removed (it still counts)
+const EGG_BASE = 7;
+const eggTotal = () => EGG_BASE + (eggsFound.has("shake") ? 1 : 0);
 let eggsFound = new Set();
 let eggDates = {};          // egg -> when it was found
 let secrets = null;
@@ -1649,7 +1651,8 @@ async function loadEggs() {
   const who = myName.toLowerCase() === "josh" ? arcProfile()?.id : myId;
   if (!who) return renderEggCounter();
   const { data } = await supabase.from("easter_eggs").select("egg, found_at").eq("user_id", who);
-  eggsFound = new Set((data || []).map((r) => r.egg));
+  const known = new Set(EGG_LIST.map((e) => e.key));
+  eggsFound = new Set((data || []).map((r) => r.egg).filter((k) => known.has(k)));
   eggDates = Object.fromEntries((data || []).map((r) => [r.egg, r.found_at]));
   renderEggCounter();
 }
@@ -1659,8 +1662,8 @@ function renderEggCounter() {
   if (!el) return;
   if (isFamily || eggsFound.size === 0) { el.classList.add("hidden"); return; }
   el.textContent = myName.toLowerCase() === "josh"
-    ? `${otherName()} found ${eggsFound.size} of ${EGG_TOTAL} easter eggs`
-    : `${eggsFound.size} of ${EGG_TOTAL} easter eggs found`;
+    ? `${otherName()} found ${eggsFound.size} of ${eggTotal()} easter eggs`
+    : `${eggsFound.size} of ${eggTotal()} easter eggs found`;
   el.classList.remove("hidden");
 }
 
@@ -1682,7 +1685,7 @@ async function eggFound(key, always = false) {
     if (always && !location.hash.startsWith("#demo")) supabase.functions.invoke("send-kiss", { body: { egg: key } }).catch(() => {});
     return;
   }
-  if (mine) { eggsFound.add(key); eggDates[key] = new Date().toISOString(); renderEggCounter(); eggToast(`Easter egg found · ${eggsFound.size} of ${EGG_TOTAL}`); }
+  if (mine) { eggsFound.add(key); eggDates[key] = new Date().toISOString(); renderEggCounter(); eggToast(`Easter egg found · ${eggsFound.size} of ${eggTotal()}`); }
   if (location.hash.startsWith("#demo")) return;    // previews save nothing
   supabase.functions.invoke("send-kiss", { body: { egg: key } }).catch(() => {});
 }
@@ -1741,76 +1744,6 @@ document.getElementById("map").addEventListener("click", (e) => {
   eggFound("roll");
 });
 
-// 4. Shake the phone to send a punch
-// How it works: each motion reading gives the phone's acceleration. A hard shake makes short
-// spikes well above normal handling. 3 spikes within 1.2 seconds = a shake.
-const SHAKE_FORCE = 13;      // m/s² above normal (about 1.3 g). Lower = easier to trigger.
-let shakeHits = [], lastShake = 0, lastPeak = 0, motionOn = false;
-let shakeDebug = null;       // #demo-shake shows the live readings
-function onMotion(e) {
-  let force;
-  const a = e.acceleration;                         // without gravity (most phones)
-  if (a && a.x != null) force = Math.hypot(a.x, a.y, a.z);
-  else {
-    const g = e.accelerationIncludingGravity;       // with gravity: subtract 9.8
-    if (!g || g.x == null) return;
-    force = Math.abs(Math.hypot(g.x, g.y, g.z) - 9.81);
-  }
-  const now = Date.now();
-  if (shakeDebug) shakeDebug.update(force, shakeHits.length);
-  if (force < SHAKE_FORCE || now - lastPeak < 120) return;   // one count per spike
-  lastPeak = now;
-  shakeHits = shakeHits.filter((t) => now - t < 1200);
-  shakeHits.push(now);
-  if (shakeHits.length < 3 || now - lastShake < 6000 || document.hidden) return;
-  lastShake = now; shakeHits = [];
-  if (shakeDebug) shakeDebug.fired();
-  const punch = document.querySelector(".ping-punch");
-  if (isFamily || !punch || dashboardView.classList.contains("hidden")) return;
-  if (punch.disabled) { eggToast("Shake again in a few seconds"); return; }
-  punch.click();
-  eggFound("shake");
-}
-
-// #demo-shake: a small readout to check the phone's motion sensor
-function showShakeDebug() {
-  const el = document.createElement("div");
-  el.className = "shake-debug";
-  el.innerHTML = `<strong>Shake test</strong><span class="sd-force">waiting for sensor…</span><span class="sd-hits"></span>`;
-  document.body.appendChild(el);
-  let peak = 0;
-  shakeDebug = {
-    update(f, hits) {
-      peak = Math.max(peak * 0.98, f);
-      el.querySelector(".sd-force").textContent = `force ${f.toFixed(1)} · peak ${peak.toFixed(1)} (needs ${SHAKE_FORCE})`;
-      el.querySelector(".sd-hits").textContent = `spikes ${hits}/3`;
-    },
-    fired() { el.classList.add("hit"); setTimeout(() => el.classList.remove("hit"), 800); },
-  };
-}
-
-function startMotion() {
-  if (motionOn || isFamily) return;
-  motionOn = true;
-  window.addEventListener("devicemotion", onMotion);
-}
-// iPhone asks for motion permission; ask once, on her first tap of a ping button
-async function askMotion() {
-  if (motionOn || isFamily) return;
-  const ask = window.DeviceMotionEvent?.requestPermission;
-  if (typeof ask !== "function") return startMotion();       // Android: no prompt needed
-  let asked = null;
-  try { asked = localStorage.getItem("jt-motion"); } catch { /* storage off */ }
-  if (asked === "denied") return;
-  try {
-    const result = await ask();
-    try { localStorage.setItem("jt-motion", result); } catch { /* storage off */ }
-    if (result === "granted") startMotion();
-  } catch { /* not allowed here */ }
-}
-pingButtons.forEach((b) => b.addEventListener("click", askMotion));
-if (typeof window.DeviceMotionEvent?.requestPermission !== "function") startMotion();
-
 // 5. Love meter: press and hold the "Live" chip
 const liveChip = document.querySelector(".live");
 let holdTimer = null;
@@ -1857,19 +1790,7 @@ function showLoveMeter() {
 
 
 
-// 7 + 8. K.O. and Kiss storm: 10 punches (or kisses) sent within a minute
-const sentTimes = { kiss: [], hug: [], punch: [] };
-function afterPing(type) {
-  const now = Date.now();
-  sentTimes[type] = (sentTimes[type] || []).filter((t) => now - t < 60000);
-  sentTimes[type].push(now);
-  if (sentTimes[type].length >= 10) {
-    sentTimes[type] = [];
-    if (type === "punch") showKO();
-    if (type === "kiss") showKissStorm();
-  }
-}
-
+// 7 + 8. K.O. and Kiss storm: her 10th punch (or kiss) of the day. The server counts and tells the app.
 function showKO() {
   const stars = Array.from({ length: 5 }, (_, i) =>
     `<span class="ko-star" style="--a:${i * 72}deg">★</span>`).join("");
@@ -1886,7 +1807,11 @@ function showKO() {
   if (navigator.vibrate) navigator.vibrate([200, 60, 200, 60, 400]);
   el.addEventListener("click", () => el.remove());
   setTimeout(() => el.remove(), 4200);
-  eggFound("ko", true);
+  // The server already saved the find and alerted Josh; just update this phone
+  if (myName.toLowerCase() !== "josh" && !eggsFound.has("ko") && !location.hash.startsWith("#demo")) {
+    eggsFound.add("ko"); eggDates.ko = new Date().toISOString(); renderEggCounter();
+    eggToast(`Easter egg found · ${eggsFound.size} of ${eggTotal()}`);
+  }
 }
 
 function showKissStorm() {
@@ -1900,7 +1825,11 @@ function showKissStorm() {
   if (navigator.vibrate) navigator.vibrate([30, 30, 30, 30, 30, 30, 30, 30, 200]);
   el.addEventListener("click", () => el.remove());
   setTimeout(() => el.remove(), 4500);
-  eggFound("storm", true);
+  // The server already saved the find and alerted Josh; just update this phone
+  if (myName.toLowerCase() !== "josh" && !eggsFound.has("storm") && !location.hash.startsWith("#demo")) {
+    eggsFound.add("storm"); eggDates.storm = new Date().toISOString(); renderEggCounter();
+    eggToast(`Easter egg found · ${eggsFound.size} of ${eggTotal()}`);
+  }
 }
 
 // 9. Night owl: opening the app between 2 and 4 AM (on her phone's clock), once a night
@@ -1937,11 +1866,12 @@ const EGG_LIST = [
   { key: "note",  name: "Secret note",  how: "Tap the headline 7 times.",          does: "Opens a hidden note from Josh.",       hint: "The headline has more to say. Be persistent." },
   { key: "combo", name: "The combo",    how: "Tap Kiss, Hug, Punch fast, in order.", does: "COMBO!",                              hint: "Some things are better in the right order." },
   { key: "roll",  name: "Barrel roll",  how: "Tap the plane on the map 5 times.",  does: "The plane does a loop-the-loop.",      hint: "Pilots love to show off." },
-  { key: "shake", name: "Shake punch",  how: "Shake your phone.",                  does: "Sends Josh a punch.",                  hint: "Sometimes you just want to shake him." },
   { key: "meter", name: "Love meter",   how: "Press and hold the Live chip.",      does: "Measures how much Josh is thinking about you.", hint: "Hold on to what's live." },
   { key: "night", name: "Night owl",    how: "Open the app between 2 and 4 AM.",   does: "Josh tells you to go to sleep.",       hint: "Some things only happen when you should be asleep." },
-  { key: "ko",    name: "K.O.",         how: "Send 10 punches within a minute.",   does: "Knocks Josh out cold.",                hint: "Float like a butterfly…" },
-  { key: "storm", name: "Kiss storm",   how: "Send 10 kisses within a minute.",    does: "A storm of hearts, and Josh hears about it.", hint: "Some days one kiss isn't enough." },
+  { key: "ko",    name: "K.O.",         how: "Send 10 punches in one day.",        does: "Knocks Josh out cold.",                hint: "Float like a butterfly…" },
+  { key: "storm", name: "Kiss storm",   how: "Send 10 kisses in one day.",         does: "A storm of hearts, and Josh hears about it.", hint: "Some days one kiss isn't enough." },
+  // Retired: only listed (and counted) if she found it before it was removed
+  { key: "shake", name: "Shake punch",  how: "Shook the phone to punch Josh.",     does: "Retired, but it still counts.",        hint: "", retired: true },
 ];
 
 function birthdaySeen() {
@@ -1952,7 +1882,7 @@ function openEggList() {
   const josh = myName.toLowerCase() === "josh";
   const lock = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"/></svg>`;
   const egg = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 3c3.6 0 6.5 5.4 6.5 10a6.5 6.5 0 0 1-13 0C5.5 8.4 8.4 3 12 3z"/></svg>`;
-  const rows = EGG_LIST.map((e) => {
+  const rows = EGG_LIST.filter((e) => !e.retired || eggsFound.has(e.key)).map((e) => {
     const found = eggsFound.has(e.key);
     const when = found && eggDates[e.key] ? ` · found ${formatDay(eggDates[e.key])}` : "";
     if (found) {
@@ -1972,7 +1902,7 @@ function openEggList() {
       <span class="egg-text"><strong>${bday ? "Birthday mode" : "A special day"}</strong><span>${bday ? "On your birthday, the whole app celebrates." : "Wait for it."}</span></span>
     </div>`;
   openSheet(`
-    <p class="sheet-kicker">${josh ? `${otherName()} has found ${eggsFound.size} of ${EGG_TOTAL}` : `${eggsFound.size} of ${EGG_TOTAL} found`}</p>
+    <p class="sheet-kicker">${josh ? `${otherName()} has found ${eggsFound.size} of ${eggTotal()}` : `${eggsFound.size} of ${eggTotal()} found`}</p>
     <h2 class="sheet-title">Easter eggs</h2>
     <div class="egg-list">${rows}${bonus}</div>
     ${josh ? "" : `<p class="sheet-note">Tap one you've found to see it again.</p>`}`);
@@ -1989,11 +1919,12 @@ document.getElementById("sheet-body").addEventListener("click", (e) => {
   else if (key === "night") maybeNightOwl(true);
   else if (key === "ko") showKO();
   else if (key === "storm") showKissStorm();
+  else if (key === "shake") eggToast("This one's retired, but it still counts");
   else if (key === "roll") {
     const plane = document.querySelector(".map-plane");
     if (plane) { plane.classList.remove("roll"); void plane.offsetWidth; plane.classList.add("roll"); plane.scrollIntoView({ behavior: "smooth", block: "center" }); }
     else eggToast("Only while Josh is flying");
-  } else if (key === "shake") eggToast("Shake your phone to punch Josh");
+  }
 });
 
 const eggCounterEl = document.getElementById("egg-counter");
@@ -2006,7 +1937,8 @@ eggCounterEl.addEventListener("keydown", (e) => { if (e.key === "Enter") openEgg
 async function maybeBirthday(force = false) {
   if (isFamily) return;
   if (!force && myName.toLowerCase() === "josh") return;
-  const sec = force ? { birthday_message: "This is a preview. Your birthday message shows here, word for word." } : await loadSecrets();
+  const sec = { ...(await loadSecrets()) };
+  if (force && !sec.birthday_message) sec.birthday_message = "No birthday message saved yet. Run easter-eggs.sql in Supabase.";
   const today = dayKeyET(Date.now());                       // "2026-03-14"
   if (!force && sec.birthday !== today.slice(5)) return;
   let shown = null;
@@ -2214,7 +2146,6 @@ async function showCorrectView() {
       loadEggs();
       if (location.hash === "#demo-birthday") maybeBirthday(true); else maybeBirthday();
       if (location.hash === "#demo-nightowl") maybeNightOwl(true); else maybeNightOwl();
-      if (location.hash === "#demo-shake") { showShakeDebug(); askMotion(); }
       if (location.hash === "#demo-ko") showKO();
       if (location.hash === "#demo-storm") showKissStorm();
     }

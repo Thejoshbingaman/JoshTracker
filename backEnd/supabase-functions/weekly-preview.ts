@@ -104,7 +104,7 @@ async function send(payload: any, onlyJosh: boolean) {
   const { data: users } = await supabase.auth.admin.listUsers();
   const family = new Set((users?.users || []).filter((u: any) => u.app_metadata?.role === "family").map((u: any) => u.id));
   const others = (all || []).filter((s: any) => s.user_id !== adminId && !family.has(s.user_id));
-  const subs = onlyJosh ? mine : (others.length ? others : all || []);
+  const subs = onlyJosh ? mine : (all || []).filter((s: any) => !family.has(s.user_id));
   let sent = 0;
   for (const s of subs) {
     try {

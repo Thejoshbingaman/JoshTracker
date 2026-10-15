@@ -162,7 +162,7 @@ async function sendToAll(payload: any) {
   const { data: users } = await supabase.auth.admin.listUsers();
   const family = new Set((users?.users || []).filter((u: any) => u.app_metadata?.role === "family").map((u: any) => u.id));
   const others = (all || []).filter((s: any) => s.user_id !== adminId && !family.has(s.user_id));
-  const subs = others.length > 0 ? others : (all || []);
+  const subs = (all || []).filter((s: any) => !family.has(s.user_id)); // Josh + Arc, never Mom
   let sent = 0;
   for (const s of subs || []) {
     try {

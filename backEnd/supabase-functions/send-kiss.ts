@@ -53,6 +53,15 @@ async function push(subs: any[], payload: any) {
   return sent;
 }
 
+// Midnight today in New York, as a UTC time (handles daylight saving)
+function easternMidnight() {
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // "2026-10-14"
+  const guess = Date.parse(`${day}T00:00:00Z`);
+  const asUtc = Date.parse(new Date(guess).toLocaleString("en-US", { timeZone: "UTC" }));
+  const asNY = Date.parse(new Date(guess).toLocaleString("en-US", { timeZone: "America/New_York" }));
+  return new Date(guess + (asUtc - asNY)).toISOString();
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
@@ -96,16 +105,19 @@ Deno.serve(async (req) => {
     };
     // These two alert Josh every time, not just the first time
     const EVERY_TIME: Record<string, { title: string; body: string }> = {
-      ko: { title: `${name} knocked you out`, body: "10 punches in a minute. Down for the count." },
-      storm: { title: `${name} is being very needy right now`, body: "10 kisses in a minute. Kiss storm incoming." },
     };
     if (body.egg) {
       if (!EGGS[body.egg]) return Response.json({ ok: false, error: "Unknown egg" }, { status: 400, headers: cors });
       const { data: added } = await admin.from("easter_eggs")
         .upsert({ user_id: user.id, egg: body.egg }, { onConflict: "user_id,egg", ignoreDuplicates: true })
         .select("egg");
-      const { count: found } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true }).eq("user_id", user.id);
+      const { count: found } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true })
+        .eq("user_id", user.id).in("egg", Object.keys(EGGS));
       const isNew = (added || []).length > 0;
+      // 7 eggs, plus the retired shake punch if she found it before it was removed
+      const { count: hasShake } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true })
+        .eq("user_id", user.id).eq("egg", "shake");
+      const total = 7 + (hasShake ? 1 : 0);
       if (EVERY_TIME[body.egg] && !isJosh) {
         const { data: joshSubs } = await admin.from("push_subscriptions").select("*").eq("user_id", adminId);
         await push(joshSubs || [], { ...EVERY_TIME[body.egg], tag: `egg-${body.egg}-${Date.now()}` });
@@ -114,11 +126,11 @@ Deno.serve(async (req) => {
         const { data: joshSubs } = await admin.from("push_subscriptions").select("*").eq("user_id", adminId);
         await push(joshSubs || [], {
           title: `${name} found an easter egg`,
-          body: `She found ${EGGS[body.egg]}. That's ${found} of ${Object.keys(EGGS).length}.`,
+          body: `She found ${EGGS[body.egg]}. That's ${found} of ${total}.`,
           tag: `egg-${body.egg}`,
         });
       }
-      return Response.json({ ok: true, isNew, found, total: Object.keys(EGGS).length }, { headers: cors });
+      return Response.json({ ok: true, isNew, found, total }, { headers: cors });
     }
 
     // 2. Ping limit: a stuck button or a bug can't flood a phone
@@ -174,7 +186,29 @@ Deno.serve(async (req) => {
       }
     }
 
-    return Response.json({ ok: true, sent, testMode, milestone }, { headers: cors });
+    // 7. Daily easter eggs: Arc's 10th punch (K.O.) or 10th kiss (Kiss storm) of the day, Eastern time
+    const DAILY: Record<string, { egg: string; title: string; body: string; found: string }> = {
+      punch: { egg: "ko", title: `${name} knocked you out`, body: "10 punches in one day. Down for the count.", found: "the K.O." },
+      kiss: { egg: "storm", title: `${name} is being very needy right now`, body: "10 kisses in one day. Kiss storm incoming.", found: "the kiss storm" },
+    };
+    let ko = false, storm = false;
+    const daily = DAILY[type];
+    if (!isJosh && daily) {
+      const { count: today } = await admin.from("pings").select("id", { count: "exact", head: true })
+        .eq("sender_id", user.id).eq("type", type).gte("created_at", easternMidnight());
+      if (today === 10) {
+        if (type === "punch") ko = true; else storm = true;
+        const joshSubs = (all || []).filter((s: any) => s.user_id === adminId);
+        await push(joshSubs, { title: daily.title, body: daily.body, tag: `${daily.egg}-${Date.now()}` });
+        const { data: added } = await admin.from("easter_eggs")
+          .upsert({ user_id: user.id, egg: daily.egg }, { onConflict: "user_id,egg", ignoreDuplicates: true }).select("egg");
+        if ((added || []).length) {
+          await push(joshSubs, { title: `${name} found an easter egg`, body: `She found ${daily.found}.`, tag: `egg-${daily.egg}` });
+        }
+      }
+    }
+
+    return Response.json({ ok: true, sent, testMode, milestone, ko, storm }, { headers: cors });
   } catch (err) {
     return Response.json({ ok: false, error: String(err) }, { status: 500, headers: cors });
   }
