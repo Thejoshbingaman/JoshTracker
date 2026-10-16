@@ -867,6 +867,7 @@ async function loadProfiles() {
   profiles = data || [];
   paintAvatar(document.getElementById("me-avatar"), profiles.find((p) => p.id === myId), myName);
   paintScoreAvatars();
+  if (!isFamily) { lastRecentHtml = ""; loadRecent(); }   // repaint photos in the Recent card
   if (myName.toLowerCase() === "josh") loadEggs();
 }
 
@@ -1065,6 +1066,61 @@ async function loadScores() {
   `;
   el.classList.remove("hidden");
   paintScoreAvatars();
+}
+
+// ---------- RECENT (last 10 kisses, hugs, and punches) ----------
+
+const RECENT_VERB = { kiss: "sent a kiss", hug: "sent a hug", punch: "threw a punch" };
+
+// "just now", "4 min ago", "3 hr ago", "Yesterday 9:14 PM", "Mon 9:14 PM", "Oct 3"
+function whenLabel(time) {
+  const t = new Date(time);
+  const mins = Math.floor((Date.now() - t.getTime()) / 60000);
+  const clock = t.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  if (mins < 60 * 6 || t >= dayStart) return timeAgo(time);
+  const daysBack = Math.ceil((dayStart - t) / 86400000);
+  if (daysBack <= 1) return `Yesterday ${clock}`;
+  if (daysBack < 7) return `${t.toLocaleDateString([], { weekday: "short" })} ${clock}`;
+  return t.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+let lastRecentHtml = "";
+async function loadRecent() {
+  const el = document.getElementById("recent-card");
+  if (!el || isFamily) return;
+  const { data, error } = await supabase.from("pings")
+    .select("sender_id, sender_name, type, created_at")
+    .order("created_at", { ascending: false })
+    .limit(10);
+  if (error || !data?.length) { el.classList.add("hidden"); return; }
+
+  const html = `
+    <h2 class="section-title">Recent</h2>
+    <div class="card recent">
+    ${data.map((r, i) => {
+      const name = (r.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+      return `
+      <div class="recent-row">
+        <span class="avatar small" data-recent="${i}">${name.slice(0, 1)}</span>
+        <span class="recent-text">
+          <span class="recent-what"><b>${name}</b> ${RECENT_VERB[r.type] || "sent a " + escapeHtml(r.type)}</span>
+          <span class="recent-when">${whenLabel(r.created_at)}</span>
+        </span>
+        <span class="recent-icon">${SCORE_ICON[r.type] || ""}</span>
+      </div>`;
+    }).join("")}
+    </div>`;
+  el.classList.remove("hidden");
+  if (html === lastRecentHtml) return;       // nothing new: do not redraw
+  lastRecentHtml = html;
+  el.innerHTML = html;
+  el.querySelectorAll("[data-recent]").forEach((a) => {
+    const r = data[a.dataset.recent];
+    const name = (r.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+    const p = profiles.find((x) => x.id === r.sender_id) || (name === "Josh" ? joshProfile() : arcProfile());
+    paintAvatar(a, p, name);
+  });
 }
 
 // ---------- LANDING CELEBRATION ----------
@@ -1337,7 +1393,7 @@ function startRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "stays" }, flightsChanged);
   if (!isFamily) {
     channel
-      .on("postgres_changes", { event: "*", schema: "public", table: "pings" }, debounce(loadScores))
+      .on("postgres_changes", { event: "*", schema: "public", table: "pings" }, debounce(() => { loadScores(); loadRecent(); }))
       .on("postgres_changes", { event: "*", schema: "public", table: "next_visit" }, debounce(loadVisit))
       .on("postgres_changes", { event: "*", schema: "public", table: "milestones" }, debounce(() => { checkMilestones(); loadCoupons(); }));
   }
@@ -1605,7 +1661,7 @@ pingButtons.forEach((button) => {
       pingStatus.textContent = "Sent, but no phones have alerts on.";
     } else {
       pingStatus.textContent = PING_DONE[type];
-      loadScores();
+      loadScores(); loadRecent();
       if (data.milestone) setTimeout(() => showMilestone(data.milestone), 600);
       if (data.ko) setTimeout(showKO, 300);           // her 10th punch today
       if (data.storm) setTimeout(showKissStorm, 300); // her 10th kiss today
@@ -2123,7 +2179,7 @@ function startTimers() {
   timers.push(setInterval(render, 1000));        // update countdowns every second
   // Realtime brings changes at once; this slower refresh is only a safety net
   timers.push(setInterval(loadFlights, 5 * 60000));
-  if (!isFamily) timers.push(setInterval(() => { loadVisit(); loadScores(); }, 5 * 60000));
+  if (!isFamily) timers.push(setInterval(() => { loadVisit(); loadScores(); loadRecent(); }, 5 * 60000));
 }
 function stopTimers() {
   timers.forEach(clearInterval);
@@ -2140,7 +2196,7 @@ async function showCorrectView() {
     await loadFlights();       // then fresh data
     if (!isFamily) {
       loadVisit();
-      loadScores();
+      loadScores(); loadRecent();
       checkMilestones();
       loadCoupons();
       loadEggs();
@@ -2193,7 +2249,7 @@ document.addEventListener("visibilitychange", () => {
   clearBadge();
   maybeNightOwl();
   loadFlights();
-  if (!isFamily) { loadScores(); loadVisit(); checkMilestones(); }
+  if (!isFamily) { loadScores(); loadRecent(); loadVisit(); checkMilestones(); }
 });
 
 window.addEventListener("hashchange", () => { if (timers.length) loadFlights(); });

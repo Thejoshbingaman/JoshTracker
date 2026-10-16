@@ -566,6 +566,7 @@ form { display: flex; flex-direction: column; gap: 12px; }
 /* ---------- Family accounts (Mom): tracker only ---------- */
 .family .pings-wrap,
 .family #score-card,
+.family #recent-card,
 .family #visit-card,
 .family #coupon-card,
 .family #alerts-card,
@@ -841,3 +842,15 @@ form { display: flex; flex-direction: column; gap: 12px; }
 #sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; margin: 0 -22px; padding: 0 22px; }
 .sheet-done { flex-shrink: 0; }
 body.sheet-open { overflow: hidden; }
+
+/* ---------- Recent (last 10 kisses, hugs, punches) ---------- */
+#recent-card { margin-bottom: 28px; }
+.recent { padding: 4px 18px; }
+.recent-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.recent-row + .recent-row { border-top: 1px solid rgba(255,255,255,0.06); }
+.recent-row .avatar { width: 32px; height: 32px; font-size: 13px; }
+.recent-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.recent-what { font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent-what b { color: var(--text); font-weight: 500; }
+.recent-when { font-size: 12px; color: var(--faint); }
+.recent-icon svg { width: 18px; height: 18px; display: block; }
