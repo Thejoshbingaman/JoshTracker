@@ -1275,7 +1275,7 @@ function postcardHtml(p) {
         <span class="pc-stamp">${SCORE_ICON.kiss}</span>
         <p class="pc-from">Postcard from <strong>${escapeHtml(p.city || "somewhere")}</strong></p>
         <p class="pc-msg">${escapeHtml(p.message).replace(/\n/g, "<br>")}</p>
-        <p class="pc-sign">— ${from} · ${whenLabel(p.created_at)}</p>
+        <p class="pc-sign">— ${from} · ${whenLabel(p.created_at)}${p.sender_id === myId ? `<button type="button" class="link-button pc-del" data-pc-del="${p.id}">Delete</button>` : ""}</p>
       </div>
     </article>`;
 }
@@ -1307,15 +1307,24 @@ async function loadPostcards() {
   fillPostcardPhotos(el);
 }
 
-// Make a photo fit a 4:3 card (center crop), as a JPEG
-async function coverPhoto(file, w = 1200, h = 900) {
-  const img = await createImageBitmap(file);
-  const scale = Math.max(w / img.width, h / img.height);
-  const sw = w / scale, sh = h / scale;
-  const canvas = document.createElement("canvas");
-  canvas.width = w; canvas.height = h;
-  canvas.getContext("2d").drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, w, h);
-  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+// Shrink a photo so its longest side is at most 1600 px. The whole photo is kept (no crop).
+// Loaded through an <img>, so the phone's rotation info is applied (photos are not sideways).
+function fitPhoto(file, max = 1600) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Couldn't read that photo")), "image/jpeg", 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read that photo")); };
+    img.src = url;
+  });
 }
 
 const pcInput = document.createElement("input");
@@ -1323,7 +1332,7 @@ pcInput.type = "file";
 pcInput.accept = "image/*";
 pcInput.hidden = true;
 document.body.appendChild(pcInput);
-let pcFile = null;
+let pcFile = null;      // the photo, already shrunk (a JPEG blob)
 
 function openPostcardComposer() {
   pcFile = null;
@@ -1339,15 +1348,43 @@ function openPostcardComposer() {
       <p class="error" id="pc-error"></p>
     </form>`);
 }
-pcInput.addEventListener("change", () => {
-  pcFile = pcInput.files?.[0] || null;
+pcInput.addEventListener("change", async () => {
+  const file = pcInput.files?.[0];
   pcInput.value = "";
   const pick = document.getElementById("pc-pick");
-  if (pick && pcFile) pick.innerHTML = `<img src="${URL.createObjectURL(pcFile)}" alt="">`;
+  if (!file || !pick) return;
+  pick.disabled = true;
+  pick.innerHTML = `<span>Loading photo…</span>`;
+  try {
+    pcFile = await fitPhoto(file);            // shrink once here; the preview and the upload use the same small file
+    pick.innerHTML = `<img src="${URL.createObjectURL(pcFile)}" alt="">`;
+    pick.classList.add("has-photo");
+  } catch (err) {
+    pcFile = null;
+    pick.innerHTML = `<span>${escapeHtml(err.message)}. Try another.</span>`;
+  } finally {
+    pick.disabled = false;
+  }
 });
 document.addEventListener("click", (e) => {
   if (e.target.closest(".pc-new")) return openPostcardComposer();
   if (e.target.closest("#pc-pick")) return pcInput.click();
+  const del = e.target.closest("[data-pc-del]");
+  if (del) {
+    if (!del.classList.contains("sure")) {            // two taps, so a slip doesn't delete it
+      del.classList.add("sure"); del.textContent = "Tap again to delete";
+      setTimeout(() => { del.classList.remove("sure"); del.textContent = "Delete"; }, 3000);
+      return;
+    }
+    const article = del.closest(".postcard");
+    supabase.from("postcards").delete().eq("id", del.dataset.pcDel).then(({ error }) => {
+      if (error) return eggToast("Couldn't delete it");
+      article?.remove();
+      lastPostcardHtml = "";
+      loadPostcards();
+    });
+    return;
+  }
   if (e.target.closest("#postcards-all")) {
     openSheet(`<p class="sheet-kicker">${postcards.length} postcards</p><h2 class="sheet-title">Postcards</h2>
       <div class="pc-list">${postcards.map(postcardHtml).join("")}</div>`);
@@ -1367,7 +1404,7 @@ document.addEventListener("submit", async (e) => {
   try {
     let photo_path = null;
     if (pcFile) {
-      const blob = await coverPhoto(pcFile);
+      const blob = pcFile;
       photo_path = `${myId}/${Date.now()}.jpg`;
       const { error } = await supabase.storage.from("postcards").upload(photo_path, blob, { contentType: "image/jpeg" });
       if (error) throw error;
@@ -2739,6 +2776,7 @@ logoutButton.addEventListener("click", async () => {
 document.addEventListener("visibilitychange", () => {
   if (document.hidden || !timers.length) return;
   clearBadge();
+  if (document.body.classList.contains("sheet-open")) return;   // e.g. back from the photo picker: don't redraw behind the sheet
   maybeNightOwl();
   loadFlights();
   if (!isFamily) { loadScores(); loadRecent(); loadPostcards(); loadVisit(); checkMilestones(); }

@@ -981,8 +981,8 @@ body.sheet-open { overflow: hidden; }
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35); transform: rotate(-0.6deg); }
 .pc-list { display: flex; flex-direction: column; gap: 18px; padding: 4px 2px; }
 .pc-list .postcard:nth-child(even) { transform: rotate(0.6deg); }
-.pc-photo { aspect-ratio: 4 / 3; background: #d9cfbf; }
-.pc-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pc-photo { background: #1a1a1d; }
+.pc-photo img { width: 100%; height: auto; max-height: 70vh; object-fit: contain; display: block; margin: 0 auto; }
 .pc-body { position: relative; padding: 16px 18px 16px; }
 .pc-stamp { float: right; margin: 0 0 8px 12px; width: 38px; height: 44px; display: grid; place-items: center;
   border: 2px dashed #c9473f; border-radius: 4px; transform: rotate(6deg); background: #fff7ec; }
@@ -996,9 +996,12 @@ body.sheet-open { overflow: hidden; }
 .pc-form { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
 .pc-pick { aspect-ratio: 4 / 3; width: 100%; padding: 0; overflow: hidden; border-radius: 16px; box-shadow: none;
   border: 2px dashed var(--line-2); background: rgba(255, 255, 255, 0.03); color: var(--muted); font-weight: 500; }
-.pc-pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pc-pick.has-photo { aspect-ratio: auto; border-style: solid; }
+.pc-pick img { width: 100%; height: auto; max-height: 45vh; object-fit: contain; display: block; margin: 0 auto; }
 textarea {
   font: inherit; font-size: 16px; width: 100%; padding: 13px 15px; border-radius: 14px; resize: vertical;
   border: 1px solid var(--line-2); background: rgba(0,0,0,0.3); color: var(--text); color-scheme: dark;
 }
 textarea:focus { outline: 2px solid var(--red); outline-offset: 0; border-color: transparent; }
+.pc-del { float: right; padding: 0; font-size: 12px; color: #a0857a; }
+.pc-del.sure { color: #c9473f; }
