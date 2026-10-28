@@ -567,6 +567,9 @@ form { display: flex; flex-direction: column; gap: 12px; }
 .family .pings-wrap,
 .family #score-card,
 .family #recent-card,
+.family #recap-card,
+.family #postcard-card,
+.family #pingback,
 .family #visit-card,
 .family #coupon-card,
 .family #alerts-card,
@@ -854,3 +857,148 @@ body.sheet-open { overflow: hidden; }
 .recent-what b { color: var(--text); font-weight: 500; }
 .recent-when { font-size: 12px; color: var(--faint); }
 .recent-icon svg { width: 18px; height: 18px; display: block; }
+
+/* ---------- More easter eggs ---------- */
+.silly-pick { width: 100%; margin-top: 16px; }
+
+/* Early bird: a sunrise */
+.bird { position: fixed; inset: 0; z-index: 2700; display: grid; place-items: center; overflow: hidden;
+  background: linear-gradient(180deg, #1c2550 0%, #6b3a6e 45%, #f08a5d 80%, #ffcf86 100%); animation: fade-in 0.6s ease; }
+.bird-inner { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px; text-align: center; }
+.bird-sun { position: relative; width: 96px; height: 96px; margin-bottom: 6px; animation: bird-rise 1.6s cubic-bezier(.2,.8,.3,1) both; }
+.bird-core { position: absolute; inset: 22px; border-radius: 50%; background: radial-gradient(circle, #fff6d0, #ffc24a); box-shadow: 0 0 50px rgba(255, 194, 74, 0.9); }
+.bird-ray { position: absolute; left: 50%; top: 50%; width: 4px; height: 14px; margin: -7px 0 0 -2px; border-radius: 2px; background: #ffe08a;
+  transform: rotate(var(--a)) translateY(-40px); animation: bird-ray 2.4s ease-in-out infinite; }
+@keyframes bird-rise { from { transform: translateY(60px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes bird-ray { 50% { opacity: 0.4; } }
+.bird-time { font-family: var(--font-mono); font-size: 14px; color: #ffe2c2; }
+.bird-title { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; color: #fff; text-shadow: 0 2px 20px rgba(0,0,0,0.3); }
+.bird-text { font-size: 17px; line-height: 1.5; color: #fff1e6; max-width: 300px; }
+.bird-sign { font-size: 15px; color: #fff; font-weight: 500; }
+.bird-close { margin-top: 14px; padding: 14px 30px; background: #fff; color: #6b3a6e; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+
+/* Great minds: two hearts meet */
+.sync { position: fixed; inset: 0; z-index: 2950; display: grid; place-items: center; background: rgba(20, 0, 8, 0.95); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); animation: fade-in 0.2s ease; }
+.sync-inner { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 24px; }
+.sync-hearts { position: relative; width: 160px; height: 80px; }
+.sync-hearts span { position: absolute; top: 10px; width: 60px; height: 60px; }
+.sync-hearts svg { width: 100%; height: 100%; filter: drop-shadow(0 0 16px rgba(255, 111, 145, 0.8)); }
+.sync-l { left: 0; animation: sync-l 0.9s cubic-bezier(.3,1.4,.5,1) both; }
+.sync-r { right: 0; animation: sync-r 0.9s cubic-bezier(.3,1.4,.5,1) both; }
+@keyframes sync-l { from { transform: translateX(-90px) rotate(-20deg); opacity: 0; } to { transform: translateX(38px) rotate(-8deg); opacity: 1; } }
+@keyframes sync-r { from { transform: translateX(90px) rotate(20deg); opacity: 0; } to { transform: translateX(-38px) rotate(8deg); opacity: 1; } }
+.sync-word { font-size: 52px; font-weight: 900; letter-spacing: -0.04em; color: #fff; text-shadow: 0 0 30px var(--rose); animation: stay-pop 0.6s 0.5s cubic-bezier(.2,1.6,.4,1) both; }
+.sync-sub { font-size: 16px; color: #ffd0dc; }
+
+/* Home state: hearts rise from Pennsylvania */
+.pa-heart { position: absolute; z-index: 1000; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
+  animation: pa-rise 2.2s ease-out both; }
+.pa-heart svg { width: 100%; height: 100%; }
+@keyframes pa-rise { from { transform: translate(0, 0) scale(0.2); opacity: 0; } 15% { opacity: 1; }
+  to { transform: translate(var(--dx), -140px) scale(var(--s)); opacity: 0; } }
+
+/* The streak: 7 dots light up */
+.streak { position: fixed; inset: 0; z-index: 2950; display: grid; place-items: center;
+  background: radial-gradient(circle, rgba(70, 20, 0, 0.95), rgba(0, 0, 0, 0.97)); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); animation: fade-in 0.2s ease; }
+.streak-inner { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 24px; }
+.streak-num { font-size: 120px; font-weight: 900; line-height: 1; color: #ffb547; text-shadow: 0 0 40px rgba(255, 181, 71, 0.7); animation: stay-pop 0.6s cubic-bezier(.2,1.6,.4,1) both; }
+.streak-word { font-size: 24px; font-weight: 700; color: #fff; }
+.streak-dots { display: flex; gap: 10px; margin: 10px 0; }
+.streak-dot { width: 18px; height: 18px; border-radius: 50%; background: rgba(255,255,255,0.12); animation: streak-on 0.3s ease both; }
+@keyframes streak-on { to { background: #ffb547; box-shadow: 0 0 14px rgba(255, 181, 71, 0.9); } }
+.streak-sub { font-size: 15px; color: #ffe2b8; max-width: 280px; }
+
+/* Photo tap: the silly photo spins in */
+.wiggle { animation: wiggle 0.3s ease; }
+@keyframes wiggle { 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
+.silly { position: fixed; inset: 0; z-index: 2950; display: grid; place-items: center; background: rgba(0, 0, 0, 0.94); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); animation: fade-in 0.2s ease; }
+.silly-inner { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 24px; }
+.silly-frame { width: 240px; height: 240px; border-radius: 50%; overflow: hidden; border: 4px solid var(--red); box-shadow: 0 0 50px rgba(255, 69, 69, 0.5);
+  display: grid; place-items: center; background: var(--red); animation: silly-spin 1s cubic-bezier(.2,1.2,.4,1) both; }
+.silly-frame img { width: 100%; height: 100%; object-fit: cover; }
+.silly-none { font-size: 100px; font-weight: 700; color: #2a0607; }
+@keyframes silly-spin { from { transform: scale(0) rotate(-720deg); } to { transform: scale(1) rotate(0); } }
+.silly-word { font-size: 24px; font-weight: 800; color: #fff; max-width: 300px; }
+.silly-sub { font-size: 13px; color: var(--muted); }
+
+/* ---------- Almost there (Josh's flight home is in the air) ---------- */
+.almost { position: fixed; inset: 0; z-index: 2600; display: grid; place-items: center; background: rgba(8, 8, 10, 0.88);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: fade-in 0.4s ease; }
+.almost-inner { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 24px; max-width: 340px; }
+.almost-track { position: relative; width: 260px; height: 60px; margin-bottom: 10px; }
+.almost-line { position: absolute; left: 0; right: 30px; top: 50%; border-top: 2px dashed rgba(255,255,255,0.25); }
+.almost-plane { position: absolute; top: 50%; left: 0; width: 34px; height: 34px; margin-top: -17px; color: var(--red);
+  animation: almost-fly 2.6s cubic-bezier(.3,.1,.3,1) both, almost-bob 1.4s 2.6s ease-in-out infinite; }
+.almost-plane svg { width: 100%; height: 100%; display: block; }
+.almost-home { position: absolute; right: 0; top: 50%; width: 34px; height: 34px; margin-top: -17px; animation: almost-beat 1.1s ease-in-out infinite; }
+.almost-home svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 12px rgba(255, 111, 145, 0.8)); }
+@keyframes almost-fly { from { left: 0; } to { left: 180px; } }
+@keyframes almost-bob { 50% { transform: translateY(-4px); } }
+@keyframes almost-beat { 0%,100% { transform: scale(1); } 15% { transform: scale(1.25); } 30% { transform: scale(1); } 45% { transform: scale(1.18); } }
+.almost-title { font-size: 40px; font-weight: 800; letter-spacing: -0.03em; color: #fff; }
+.almost-text { font-size: 17px; color: var(--muted); line-height: 1.5; }
+.almost-eta { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--red-soft); }
+.almost-close { margin-top: 12px; padding: 14px 30px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bird-sun, .bird-ray, .sync-l, .sync-r, .sync-word, .pa-heart, .streak-num, .streak-dot, .silly-frame, .wiggle,
+  .almost-plane, .almost-home { animation: none !important; }
+  .almost-plane { left: 180px; }
+  .streak-dot { background: #ffb547; }
+}
+
+/* ---------- Section title with a link on the right ---------- */
+.section-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.section-row .see-all { margin: 0 2px 14px; padding: 0; }
+
+/* ---------- Ping back ---------- */
+#pingback { margin: 0 0 18px; }
+.pingback { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-color: rgba(255, 69, 69, 0.35);
+  background: linear-gradient(180deg, rgba(255, 69, 69, 0.12), rgba(255, 69, 69, 0.04)); animation: fade-in 0.4s ease; }
+.pingback .avatar { width: 34px; height: 34px; }
+.pb-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 14px; color: var(--muted); }
+.pb-text > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pb-text b { color: var(--text); font-weight: 500; }
+.pb-when { font-size: 12px; color: var(--faint); }
+.pb-send { flex-shrink: 0; }
+
+/* ---------- Recent: see all ---------- */
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.chip { padding: 8px 14px; font-size: 13px; font-weight: 500; border-radius: 999px; box-shadow: none;
+  background: var(--surface-2); border: 1px solid var(--line-2); color: var(--muted); }
+.chip.on { background: var(--red); border-color: transparent; color: #fff; }
+.recent-sheet { padding: 0; }
+
+/* ---------- Week in review ---------- */
+#recap-card { margin-bottom: 28px; }
+.recap { border-color: rgba(255, 181, 71, 0.3); }
+.recap-line { display: flex; align-items: center; gap: 8px; padding: 14px 0 4px; font-size: 15px; font-weight: 600; color: #ffd08a; }
+.recap .score-name svg { margin-left: 6px; vertical-align: -2px; }
+
+/* ---------- Postcards ---------- */
+#postcard-card { margin-bottom: 28px; }
+.postcard { position: relative; overflow: hidden; border-radius: 18px; background: #f4ecdd; color: #2b2320;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35); transform: rotate(-0.6deg); }
+.pc-list { display: flex; flex-direction: column; gap: 18px; padding: 4px 2px; }
+.pc-list .postcard:nth-child(even) { transform: rotate(0.6deg); }
+.pc-photo { aspect-ratio: 4 / 3; background: #d9cfbf; }
+.pc-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pc-body { position: relative; padding: 16px 18px 16px; }
+.pc-stamp { float: right; margin: 0 0 8px 12px; width: 38px; height: 44px; display: grid; place-items: center;
+  border: 2px dashed #c9473f; border-radius: 4px; transform: rotate(6deg); background: #fff7ec; }
+.pc-stamp svg { width: 20px; height: 20px; }
+.pc-from { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #8a6f5c; padding-top: 4px; }
+.pc-from strong { color: #c9473f; }
+.pc-msg { margin-top: 8px; font-size: 17px; line-height: 1.45; font-style: italic; font-family: Georgia, "Times New Roman", serif; overflow-wrap: anywhere; }
+.pc-sign { clear: both; margin-top: 10px; font-size: 13px; color: #8a6f5c; }
+.pc-empty { padding: 18px; font-size: 14px; color: var(--muted); text-align: center; }
+.pc-new { width: 100%; margin-top: 14px; }
+.pc-form { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+.pc-pick { aspect-ratio: 4 / 3; width: 100%; padding: 0; overflow: hidden; border-radius: 16px; box-shadow: none;
+  border: 2px dashed var(--line-2); background: rgba(255, 255, 255, 0.03); color: var(--muted); font-weight: 500; }
+.pc-pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+textarea {
+  font: inherit; font-size: 16px; width: 100%; padding: 13px 15px; border-radius: 14px; resize: vertical;
+  border: 1px solid var(--line-2); background: rgba(0,0,0,0.3); color: var(--text); color-scheme: dark;
+}
+textarea:focus { outline: 2px solid var(--red); outline-offset: 0; border-color: transparent; }

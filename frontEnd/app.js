@@ -191,6 +191,18 @@ function homeFlightFrom(hero) {
 }
 
 // The hotel stay going on right now (null if none)
+// Two stays that overlap (a changed booking, a hotel event left behind): keep the newer one
+function dropOverlaps(list) {
+  const newestFirst = [...list].sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+  const kept = [];
+  for (const s of newestFirst) {
+    const a0 = new Date(s.check_in).getTime(), a1 = new Date(s.check_out).getTime();
+    const clash = kept.some((k) => a0 < new Date(k.check_out).getTime() && new Date(k.check_in).getTime() < a1);
+    if (!clash) kept.push(s);
+  }
+  return kept.sort((a, b) => new Date(a.check_in) - new Date(b.check_in));
+}
+
 function currentStay() {
   const now = Date.now();
   return stays.find((s) => new Date(s.check_in).getTime() <= now && now < new Date(s.check_out).getTime()) || null;
@@ -743,6 +755,7 @@ function renderMap(hero) {
       statesLayer = L.geoJSON(geo, { pane: "states", interactive: false, style: stateStyle }).addTo(map);
     }).catch(() => { /* no borders if the file can't load */ });
     mapLayers = L.layerGroup().addTo(map);
+    hookPaTaps();
   }
   mapHero = hero;
   if (statesLayer) statesLayer.setStyle(stateStyle);
@@ -878,13 +891,13 @@ function paintScoreAvatars() {
   });
 }
 
-// Shrink any photo to a 320 x 320 square (center crop), as a JPEG
-async function squarePhoto(file) {
+// Shrink any photo to a square (320 x 320 unless asked), center crop, as a JPEG
+async function squarePhoto(file, size = 320) {
   const img = await createImageBitmap(file);
   const side = Math.min(img.width, img.height);
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 320;
-  canvas.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 320, 320);
+  canvas.width = canvas.height = size;
+  canvas.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
   return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
 }
 
@@ -1034,6 +1047,7 @@ const SCORE_ICON = {
 };
 
 async function loadScores() {
+  loadRecap();
   const el = document.getElementById("score-card");
   // All-time totals. The database counts them, so this stays fast as the numbers grow.
   const count = (type, josh) => {
@@ -1093,35 +1107,283 @@ async function loadRecent() {
     .select("sender_id, sender_name, type, created_at")
     .order("created_at", { ascending: false })
     .limit(10);
-  if (error || !data?.length) { el.classList.add("hidden"); return; }
+  if (error || !data?.length) { el.classList.add("hidden"); renderPingBack(null); return; }
+  renderPingBack(data[0]);
 
   const html = `
-    <h2 class="section-title">Recent</h2>
-    <div class="card recent">
-    ${data.map((r, i) => {
-      const name = (r.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
-      return `
+    <div class="section-row">
+      <h2 class="section-title">Recent</h2>
+      <button type="button" class="link-button see-all" id="recent-all">See all</button>
+    </div>
+    <div class="card recent">${data.map(recentRowHtml).join("")}</div>`;
+  el.classList.remove("hidden");
+  if (html === lastRecentHtml) return;       // nothing new: do not redraw
+  lastRecentHtml = html;
+  el.innerHTML = html;
+  paintRecentAvatars(el, data);
+}
+
+// ---------- PING BACK ----------
+// For 5 minutes after the other person sends something, a button at the top sends one right back.
+
+const BACK_LABEL = { kiss: "Kiss back", hug: "Hug back", punch: "Punch back" };
+let pingBackTimer = null;
+function renderPingBack(latest) {
+  const el = document.getElementById("pingback");
+  if (!el) return;
+  clearTimeout(pingBackTimer);
+  const fromJosh = (latest?.sender_name || "").toLowerCase() === "josh";
+  const meJosh = myName.toLowerCase() === "josh";
+  const age = latest ? Date.now() - new Date(latest.created_at).getTime() : Infinity;
+  if (!latest || isFamily || fromJosh === meJosh || age > 5 * 60000 || !BACK_LABEL[latest.type]) {
+    el.classList.add("hidden"); el.innerHTML = ""; return;
+  }
+  const name = fromJosh ? "Josh" : "Arc";
+  el.innerHTML = `
+    <div class="card pingback">
+      <span class="avatar small" data-who="${name}">${name.slice(0, 1)}</span>
+      <span class="pb-text"><span><b>${name}</b> ${RECENT_VERB[latest.type]}</span><span class="pb-when">${timeAgo(latest.created_at)}</span></span>
+      <button type="button" class="small pb-send" data-type="${latest.type}">${BACK_LABEL[latest.type]}</button>
+    </div>`;
+  el.classList.remove("hidden");
+  paintAvatar(el.querySelector(".avatar"), profiles.find((p) => p.id === latest.sender_id) || (fromJosh ? joshProfile() : arcProfile()), name);
+  pingBackTimer = setTimeout(() => renderPingBack(latest), 30000);   // update the time, then hide after 5 minutes
+}
+document.getElementById("pingback").addEventListener("click", (e) => {
+  const b = e.target.closest(".pb-send");
+  if (!b) return;
+  document.getElementById("pingback").classList.add("hidden");
+  document.querySelector(`.ping[data-type="${b.dataset.type}"]`)?.click();
+});
+
+// ---------- RECENT: SEE ALL (last 50, with a filter) ----------
+
+function recentRowHtml(r, i) {
+  const name = (r.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+  return `
       <div class="recent-row">
-        <span class="avatar small" data-recent="${i}">${name.slice(0, 1)}</span>
+        <span class="avatar small" data-recent="${i}" data-who="${name}">${name.slice(0, 1)}</span>
         <span class="recent-text">
           <span class="recent-what"><b>${name}</b> ${RECENT_VERB[r.type] || "sent a " + escapeHtml(r.type)}</span>
           <span class="recent-when">${whenLabel(r.created_at)}</span>
         </span>
         <span class="recent-icon">${SCORE_ICON[r.type] || ""}</span>
       </div>`;
-    }).join("")}
-    </div>`;
-  el.classList.remove("hidden");
-  if (html === lastRecentHtml) return;       // nothing new: do not redraw
-  lastRecentHtml = html;
-  el.innerHTML = html;
-  el.querySelectorAll("[data-recent]").forEach((a) => {
+}
+function paintRecentAvatars(box, data) {
+  box.querySelectorAll("[data-recent]").forEach((a) => {
     const r = data[a.dataset.recent];
-    const name = (r.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
-    const p = profiles.find((x) => x.id === r.sender_id) || (name === "Josh" ? joshProfile() : arcProfile());
-    paintAvatar(a, p, name);
+    const name = a.dataset.who;
+    paintAvatar(a, profiles.find((x) => x.id === r.sender_id) || (name === "Josh" ? joshProfile() : arcProfile()), name);
   });
 }
+async function openRecentAll(type = "all") {
+  let q = supabase.from("pings").select("sender_id, sender_name, type, created_at")
+    .order("created_at", { ascending: false }).limit(50);
+  if (type !== "all") q = q.eq("type", type);
+  const { data } = await q;
+  const list = data || [];
+  const chips = [["all", "All"], ["kiss", "Kisses"], ["hug", "Hugs"], ["punch", "Punches"]]
+    .map(([k, l]) => `<button type="button" class="chip${k === type ? " on" : ""}" data-recent-filter="${k}">${l}</button>`).join("");
+  openSheet(`
+    <p class="sheet-kicker">Last ${list.length || 50}</p>
+    <h2 class="sheet-title">Recent</h2>
+    <div class="chips">${chips}</div>
+    <div class="recent recent-sheet">${list.map(recentRowHtml).join("") || `<p class="sheet-note">Nothing here yet.</p>`}</div>`);
+  paintRecentAvatars(document.getElementById("sheet-body"), list);
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#recent-all")) return openRecentAll();
+  const f = e.target.closest("[data-recent-filter]");
+  if (f) openRecentAll(f.dataset.recentFilter);
+});
+
+// ---------- WEEK IN REVIEW (Sundays) ----------
+// Monday to now, Eastern time: who sent the most this week.
+
+// How far Eastern time is from UTC at a moment (in ms, e.g. -4 hours)
+function etOffsetMs(t) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: TIME_ZONE, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  }).formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(t / 1000) * 1000;
+}
+// "2026-10-26" -> the moment it is midnight that day in Eastern time
+function etMidnight(day) {
+  const g = Date.parse(`${day}T00:00:00Z`);
+  return new Date(g - etOffsetMs(g + 12 * 3600000));
+}
+
+const TROPHY = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#ffb547" d="M7 3h10v2h3v3a4 4 0 0 1-4 4h-.3A5 5 0 0 1 13 14.9V18h3v3H8v-3h3v-3.1A5 5 0 0 1 8.3 12H8a4 4 0 0 1-4-4V5h3zm0 4H6v1a2 2 0 0 0 1 1.7zm10 0v2.7A2 2 0 0 0 18 8V7z"/></svg>`;
+
+async function loadRecap() {
+  const el = document.getElementById("recap-card");
+  if (!el || isFamily) return;
+  const today = dayKeyET(Date.now());
+  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();          // 0 = Sunday
+  if (dow !== 0 && location.hash !== "#demo-recap") { el.classList.add("hidden"); return; }
+  const monday = new Date(Date.parse(`${today}T12:00:00Z`) - ((dow + 6) % 7) * 86400000).toISOString().slice(0, 10);
+  const { data, error } = await supabase.from("pings").select("sender_name, type")
+    .gte("created_at", etMidnight(monday).toISOString()).limit(5000);
+  if (error) { el.classList.add("hidden"); return; }
+  const people = { Arc: { kiss: 0, hug: 0, punch: 0, all: 0 }, Josh: { kiss: 0, hug: 0, punch: 0, all: 0 } };
+  for (const r of data || []) {
+    const who = (r.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+    if (people[who][r.type] == null) continue;
+    people[who][r.type]++; people[who].all++;
+  }
+  const a = people.Arc.all, j = people.Josh.all;
+  const winner = a > j ? "Arc" : j > a ? "Josh" : null;
+  const line = a + j === 0 ? "A quiet week. Next week, maybe?"
+    : winner ? `${winner} wins the week, ${Math.max(a, j)} to ${Math.min(a, j)}`
+    : `A tie this week, ${a} to ${j}`;
+  el.innerHTML = `
+    <h2 class="section-title">Week in review</h2>
+    <div class="card score recap">
+      <p class="recap-line">${winner ? TROPHY : ""}<span>${line}</span></p>
+      ${Object.entries(people).map(([name, c]) => `
+      <div class="score-row">
+        <span class="score-name"><span class="avatar small" data-score-avatar="${name}">${name.slice(0, 1)}</span>${name}${name === winner ? TROPHY : ""}</span>
+        <span class="score-cell">${SCORE_ICON.kiss}${c.kiss}</span>
+        <span class="score-cell">${SCORE_ICON.hug}${c.hug}</span>
+        <span class="score-cell">${SCORE_ICON.punch}${c.punch}</span>
+      </div>`).join("")}
+    </div>`;
+  el.classList.remove("hidden");
+  paintScoreAvatars();
+}
+
+// ---------- POSTCARDS ----------
+// A photo and a short message from wherever you are. Either of you can send one.
+
+let postcards = [];
+const postcardUrls = {};
+async function postcardPhoto(path) {
+  if (!path) return null;
+  if (postcardUrls[path]) return postcardUrls[path];
+  const { data } = await supabase.storage.from("postcards").createSignedUrl(path, 60 * 60 * 24);
+  if (data?.signedUrl) postcardUrls[path] = data.signedUrl;
+  return postcardUrls[path] || null;
+}
+function postcardHtml(p) {
+  const from = (p.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+  return `
+    <article class="postcard">
+      ${p.photo_path ? `<div class="pc-photo" data-pc-photo="${escapeHtml(p.photo_path)}"></div>` : ""}
+      <div class="pc-body">
+        <span class="pc-stamp">${SCORE_ICON.kiss}</span>
+        <p class="pc-from">Postcard from <strong>${escapeHtml(p.city || "somewhere")}</strong></p>
+        <p class="pc-msg">${escapeHtml(p.message).replace(/\n/g, "<br>")}</p>
+        <p class="pc-sign">— ${from} · ${whenLabel(p.created_at)}</p>
+      </div>
+    </article>`;
+}
+async function fillPostcardPhotos(box) {
+  box.querySelectorAll("[data-pc-photo]").forEach(async (d) => {
+    const url = d.dataset.pcPhoto.startsWith("blob:") ? d.dataset.pcPhoto : await postcardPhoto(d.dataset.pcPhoto);
+    if (url) d.innerHTML = `<img src="${url}" alt="">`;
+  });
+}
+let lastPostcardHtml = "";
+async function loadPostcards() {
+  const el = document.getElementById("postcard-card");
+  if (!el || isFamily) return;
+  const { data, error } = await supabase.from("postcards").select("*").order("created_at", { ascending: false }).limit(50);
+  if (error) { el.classList.add("hidden"); return; }      // the postcards table isn't made yet
+  postcards = data || [];
+  const p = postcards[0];
+  const html = `
+    <div class="section-row">
+      <h2 class="section-title">Postcards</h2>
+      ${postcards.length > 1 ? `<button type="button" class="link-button see-all" id="postcards-all">See all (${postcards.length})</button>` : ""}
+    </div>
+    ${p ? postcardHtml(p) : `<div class="card pc-empty">No postcards yet. Send one from wherever you are.</div>`}
+    <button type="button" class="ghost pc-new">Send a postcard</button>`;
+  el.classList.remove("hidden");
+  if (html === lastPostcardHtml) return;
+  lastPostcardHtml = html;
+  el.innerHTML = html;
+  fillPostcardPhotos(el);
+}
+
+// Make a photo fit a 4:3 card (center crop), as a JPEG
+async function coverPhoto(file, w = 1200, h = 900) {
+  const img = await createImageBitmap(file);
+  const scale = Math.max(w / img.width, h / img.height);
+  const sw = w / scale, sh = h / scale;
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  canvas.getContext("2d").drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, w, h);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+}
+
+const pcInput = document.createElement("input");
+pcInput.type = "file";
+pcInput.accept = "image/*";
+pcInput.hidden = true;
+document.body.appendChild(pcInput);
+let pcFile = null;
+
+function openPostcardComposer() {
+  pcFile = null;
+  const where = myName.toLowerCase() === "josh" ? (currentStay()?.city || "") : "";
+  openSheet(`
+    <p class="sheet-kicker">New postcard</p>
+    <h2 class="sheet-title">Send a postcard</h2>
+    <form class="pc-form" id="pc-form">
+      <button type="button" class="pc-pick" id="pc-pick"><span>+ Add a photo</span></button>
+      <label class="field"><span>From</span><input id="pc-city" type="text" maxlength="40" placeholder="City" value="${escapeHtml(where)}"></label>
+      <label class="field"><span>Message</span><textarea id="pc-msg" maxlength="500" rows="4" required placeholder="Wish you were here…"></textarea></label>
+      <button type="submit" class="pc-submit">Send postcard</button>
+      <p class="error" id="pc-error"></p>
+    </form>`);
+}
+pcInput.addEventListener("change", () => {
+  pcFile = pcInput.files?.[0] || null;
+  pcInput.value = "";
+  const pick = document.getElementById("pc-pick");
+  if (pick && pcFile) pick.innerHTML = `<img src="${URL.createObjectURL(pcFile)}" alt="">`;
+});
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".pc-new")) return openPostcardComposer();
+  if (e.target.closest("#pc-pick")) return pcInput.click();
+  if (e.target.closest("#postcards-all")) {
+    openSheet(`<p class="sheet-kicker">${postcards.length} postcards</p><h2 class="sheet-title">Postcards</h2>
+      <div class="pc-list">${postcards.map(postcardHtml).join("")}</div>`);
+    fillPostcardPhotos(document.getElementById("sheet-body"));
+  }
+});
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "pc-form") return;
+  e.preventDefault();
+  const city = document.getElementById("pc-city").value.trim();
+  const message = document.getElementById("pc-msg").value.trim();
+  const err = document.getElementById("pc-error");
+  const btn = e.target.querySelector(".pc-submit");
+  if (!message) { err.textContent = "Write a message first."; return; }
+  if (location.hash.startsWith("#demo")) { closeSheet(); eggToast("Preview: postcard not sent"); return; }
+  btn.disabled = true; btn.textContent = "Sending…"; err.textContent = "";
+  try {
+    let photo_path = null;
+    if (pcFile) {
+      const blob = await coverPhoto(pcFile);
+      photo_path = `${myId}/${Date.now()}.jpg`;
+      const { error } = await supabase.storage.from("postcards").upload(photo_path, blob, { contentType: "image/jpeg" });
+      if (error) throw error;
+    }
+    const { data, error } = await supabase.from("postcards")
+      .insert({ sender_name: myName, city: city || null, message, photo_path }).select("id").single();
+    if (error) throw error;
+    supabase.functions.invoke("send-kiss", { body: { postcard: data.id } }).catch(() => {});
+    closeSheet();
+    eggToast("Postcard sent");
+    loadPostcards();
+  } catch (ex) {
+    err.textContent = "Didn't send. " + (ex.message || ex);
+    btn.disabled = false; btn.textContent = "Send postcard";
+  }
+});
 
 // ---------- LANDING CELEBRATION ----------
 // Once per phone, when Josh's flight home has landed in the last 12 hours.
@@ -1250,7 +1512,7 @@ function demoFlights(mode) {
 
 function demoMode() {
   const h = location.hash.replace("#", "");
-  if (h === "demo") return "air";
+  if (h === "demo" || h === "demo-almost") return "air";
   if (h === "demo-before") return "before";
   if (h === "demo-landed") return "landed";
   if (h === "demo-home") return "home";
@@ -1267,6 +1529,7 @@ async function loadFlights() {
     render();
     renderMap(pickHero(flights));
     if (mode === "home") maybeCelebrate(true);
+    if (location.hash === "#demo-almost") maybeAlmostThere(true);
     return;
   }
 
@@ -1282,11 +1545,12 @@ async function loadFlights() {
   flights = data;
   const since = new Date(Date.now() - 86400000).toISOString();
   const stayRes = await supabase.from("stays").select("*").gt("check_out", since).order("check_in");
-  stays = stayRes.error ? [] : stayRes.data; // no stays table yet = no stays
+  stays = stayRes.error ? [] : dropOverlaps(stayRes.data); // no stays table yet = no stays
   saveSnapshot();
   render();
   renderMap(pickHero(flights)); // the map only redraws when new data comes in
   maybeCelebrate(false);
+  maybeAlmostThere();
 }
 
 // ---------- COUPON WALLET ----------
@@ -1375,7 +1639,7 @@ function showSnapshot() {
     const snap = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || "null");
     if (!snap || demoMode()) return false;
     flights = snap.flights || [];
-    stays = snap.stays || [];
+    stays = dropOverlaps(snap.stays || []);
     render();
     return true;
   } catch { return false; }
@@ -1385,6 +1649,7 @@ function showSnapshot() {
 // Supabase tells the open app the moment a row changes, so there is no wait for the next refresh.
 let channel = null;
 function debounce(fn, ms = 400) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
+let pcChannel = null;
 function startRealtime() {
   stopRealtime();
   const flightsChanged = debounce(() => { if (!demoMode()) loadFlights(); });
@@ -1398,9 +1663,16 @@ function startRealtime() {
       .on("postgres_changes", { event: "*", schema: "public", table: "milestones" }, debounce(() => { checkMilestones(); loadCoupons(); }));
   }
   channel.subscribe();
+  // Postcards on their own channel, so the rest still works before the postcards table exists
+  if (!isFamily) {
+    pcChannel = supabase.channel("joshtracker-postcards")
+      .on("postgres_changes", { event: "*", schema: "public", table: "postcards" }, debounce(loadPostcards))
+      .subscribe();
+  }
 }
 function stopRealtime() {
   if (channel) { supabase.removeChannel(channel); channel = null; }
+  if (pcChannel) { supabase.removeChannel(pcChannel); pcChannel = null; }
 }
 
 // ---------- MILESTONE NOTES ----------
@@ -1665,6 +1937,8 @@ pingButtons.forEach((button) => {
       if (data.milestone) setTimeout(() => showMilestone(data.milestone), 600);
       if (data.ko) setTimeout(showKO, 300);           // her 10th punch today
       if (data.storm) setTimeout(showKissStorm, 300); // her 10th kiss today
+      if (data.sync) setTimeout(showSync, 300);       // she and Josh sent within a minute
+      if (data.streak) setTimeout(showStreak, 900);   // 7 days in a row
     }
 
     // Short cooldown so a button can't be spammed by accident
@@ -1683,12 +1957,17 @@ pingButtons.forEach((button) => {
 //   roll   tap the plane on the map 5 times
 //   meter  press and hold the "Live" chip
 //   night  open the app between 2 and 4 AM
-//   ko     10 punches within a minute
-//   storm  10 kisses within a minute
+//   ko     10 punches in one day
+//   storm  10 kisses in one day
+//   early  open the app between 4 and 6 AM Eastern
+//   sync   she sends within a minute of Josh (server)
+//   home   tap Pennsylvania on the map 5 times
+//   streak her sends on 7 days in a row (server)
+//   photo  tap Josh's photo 10 times (shows his silly photo)
 // Plus birthday mode on her birthday (set in the secrets table).
 
-// 7 eggs, plus the retired shake punch if she found it before it was removed (it still counts)
-const EGG_BASE = 7;
+// 12 eggs, plus the retired shake punch if she found it before it was removed (it still counts)
+const EGG_BASE = 12;
 const eggTotal = () => EGG_BASE + (eggsFound.has("shake") ? 1 : 0);
 let eggsFound = new Set();
 let eggDates = {};          // egg -> when it was found
@@ -1917,6 +2196,200 @@ function maybeNightOwl(force = false) {
   eggFound("night");
 }
 
+// 10. Early bird: opening the app between 4 and 6 AM Eastern, once a morning
+function maybeEarlyBird(force = false) {
+  if (isFamily) return;
+  const now = new Date();
+  const hour = Number(now.toLocaleString("en-US", { hour: "numeric", hourCycle: "h23", timeZone: TIME_ZONE }));
+  if (!force && (hour < 4 || hour >= 6)) return;
+  const morning = dayKeyET(now);
+  let shown = null;
+  try { shown = localStorage.getItem("jt-earlybird"); } catch { /* storage off */ }
+  if (!force && shown === morning) return;
+  try { localStorage.setItem("jt-earlybird", morning); } catch { /* storage off */ }
+  const rays = Array.from({ length: 12 }, (_, i) => `<span class="bird-ray" style="--a:${i * 30}deg"></span>`).join("");
+  const el = document.createElement("div");
+  el.className = "bird";
+  el.innerHTML = `
+    <div class="bird-inner">
+      <div class="bird-sun">${rays}<span class="bird-core"></span></div>
+      <p class="bird-time">${formatAt(now, null, false)}</p>
+      <h1 class="bird-title">Up before the sun?</h1>
+      <p class="bird-text">Good morning. Have a great day. I'm already thinking about you.</p>
+      <p class="bird-sign">— Josh</p>
+      <button type="button" class="bird-close">Good morning</button>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector(".bird-close").addEventListener("click", () => el.remove());
+  eggFound("early");
+}
+
+// Mark a server-found egg on this phone (the server already saved it and told Josh)
+function serverEgg(key) {
+  if (myName.toLowerCase() === "josh" || eggsFound.has(key) || location.hash.startsWith("#demo")) return;
+  eggsFound.add(key); eggDates[key] = new Date().toISOString(); renderEggCounter();
+  eggToast(`Easter egg found · ${eggsFound.size} of ${eggTotal()}`);
+}
+
+// 11. Great minds: she sends within a minute of Josh (either order). The server checks.
+function showSync() {
+  const heart = SCORE_ICON.kiss;
+  const el = document.createElement("div");
+  el.className = "sync";
+  const other = myName.toLowerCase() === "josh" ? otherName() : "Josh";
+  el.innerHTML = `
+    <div class="sync-inner">
+      <div class="sync-hearts"><span class="sync-l">${heart}</span><span class="sync-r">${heart}</span></div>
+      <span class="sync-word">Great minds</span>
+      <span class="sync-sub">You and ${escapeHtml(other)} sent at the same time</span>
+    </div>`;
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate([40, 80, 40]);
+  el.addEventListener("click", () => el.remove());
+  setTimeout(() => el.remove(), 4200);
+  serverEgg("sync");
+}
+
+// 12. Home state: tap Pennsylvania on the map 5 times. Hearts rise from it.
+let paShape = null;
+fetch("us-states.json").then((r) => r.json()).then((geo) => {
+  paShape = geo.features.find((f) => f.properties?.name === "Pennsylvania")?.geometry || null;
+}).catch(() => {});
+const paTaps = tapCounter(5, 4000);
+function paHearts(point) {
+  const box = document.getElementById("map");
+  const heart = SCORE_ICON.kiss;
+  for (let i = 0; i < 14; i++) {
+    const h = document.createElement("span");
+    h.className = "pa-heart";
+    h.innerHTML = heart;
+    h.style.left = `${point.x + (i % 7 - 3) * 9}px`;
+    h.style.top = `${point.y}px`;
+    h.style.animationDelay = `${i * 0.08}s`;
+    h.style.setProperty("--dx", `${(i * 37) % 60 - 30}px`);
+    h.style.setProperty("--s", `${0.6 + (i % 4) * 0.2}`);
+    box.appendChild(h);
+    setTimeout(() => h.remove(), 2600);
+  }
+}
+function paFromList() {
+  if (!map || document.getElementById("map-card").classList.contains("hidden")) return eggToast("Only while the map is showing");
+  document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "center" });
+  setTimeout(() => paHearts(map.latLngToContainerPoint([40.9, -77.6])), 500);
+}
+function hookPaTaps() {
+  if (!map || hookPaTaps.done) return;
+  hookPaTaps.done = true;
+  map.on("click", (e) => {
+    if (!paShape || !inState(e.latlng.lat, e.latlng.lng, paShape) || !paTaps()) return;
+    paHearts(e.containerPoint);
+    if (!isFamily) eggFound("home");
+  });
+}
+
+// 13. The streak: her sends on 7 days in a row (Eastern). The server checks.
+function showStreak() {
+  const dots = Array.from({ length: 7 }, (_, i) => `<span class="streak-dot" style="animation-delay:${0.3 + i * 0.18}s"></span>`).join("");
+  const el = document.createElement("div");
+  el.className = "streak";
+  el.innerHTML = `
+    <div class="streak-inner">
+      <span class="streak-num">7</span>
+      <span class="streak-word">days in a row</span>
+      <div class="streak-dots">${dots}</div>
+      <span class="streak-sub">A whole week without missing a day. Josh noticed.</span>
+    </div>`;
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate([30, 40, 30, 40, 30, 40, 200]);
+  el.addEventListener("click", () => el.remove());
+  setTimeout(() => el.remove(), 5000);
+  serverEgg("streak");
+}
+
+// 14. Photo tap: tap Josh's photo 10 times. Shows the silly photo he uploaded.
+const photoTaps = tapCounter(10, 5000);
+document.addEventListener("click", (e) => {
+  const a = e.target.closest('[data-score-avatar="Josh"], [data-who="Josh"]');
+  if (!a || isFamily) return;
+  a.classList.remove("wiggle"); void a.offsetWidth; a.classList.add("wiggle");
+  if (photoTaps()) showSillyPhoto();
+});
+async function sillyUrl() {
+  const p = joshProfile();
+  if (!p?.silly_path) return null;
+  const { data } = await supabase.storage.from("avatars").createSignedUrl(p.silly_path, 60 * 60);
+  return data?.signedUrl || null;
+}
+async function showSillyPhoto() {
+  const url = location.hash === "#demo-photo" ? null : await sillyUrl();
+  const el = document.createElement("div");
+  el.className = "silly";
+  el.innerHTML = `
+    <div class="silly-inner">
+      <div class="silly-frame">${url ? `<img src="${url}" alt="">` : `<span class="silly-none">J</span>`}</div>
+      <span class="silly-word">${url ? "You weren't supposed to see this" : "Josh hasn't picked his silly photo yet"}</span>
+      <span class="silly-sub">Tap anywhere to un-see it</span>
+    </div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", () => el.remove());
+  eggFound("photo");
+}
+
+// Josh picks the silly photo from the egg list
+const sillyInput = document.createElement("input");
+sillyInput.type = "file";
+sillyInput.accept = "image/*";
+sillyInput.hidden = true;
+document.body.appendChild(sillyInput);
+sillyInput.addEventListener("change", async () => {
+  const file = sillyInput.files?.[0];
+  sillyInput.value = "";
+  if (!file || !myId) return;
+  eggToast("Saving your silly photo…");
+  try {
+    const blob = await squarePhoto(file, 640);
+    const path = `${myId}-silly.jpg`;
+    const { error } = await supabase.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg" });
+    if (error) throw error;
+    const { error: e2 } = await supabase.from("profiles").update({ silly_path: path, updated_at: new Date().toISOString() }).eq("id", myId);
+    if (e2) throw e2;
+    await loadProfiles();
+    eggToast("Silly photo saved");
+  } catch (err) {
+    alert("Couldn't save the silly photo. Try again.\n" + (err.message || err));
+  }
+});
+
+// ---------- ALMOST THERE ----------
+// Not an easter egg: a pop-up once per flight, while Josh's flight home is in the air.
+function maybeAlmostThere(force = false) {
+  if (!force && myName.toLowerCase() === "josh") return;
+  const f = flights.find((x) => phaseOf(x) === "air" && (force || HOME_AIRPORTS.includes(x.destination)));
+  if (!f || document.querySelector(".almost")) return;
+  const key = `jt-almost-${f.flightNumber}-${f.date}`;
+  if (!force) {
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; }
+  }
+  const mins = Math.max(0, Math.round((new Date(arrivalTime(f)).getTime() - Date.now()) / 60000));
+  const left = mins >= 60 ? `${Math.floor(mins / 60)} hr ${mins % 60} min` : `${mins} min`;
+  const el = document.createElement("div");
+  el.className = "almost";
+  el.innerHTML = `
+    <div class="almost-inner">
+      <div class="almost-track">
+        <span class="almost-line"></span>
+        <span class="almost-plane">${PLANE_SVG}</span>
+        <span class="almost-home">${SCORE_ICON.kiss}</span>
+      </div>
+      <h1 class="almost-title">Almost there</h1>
+      <p class="almost-text">Josh is in the air and on his way home.</p>
+      <p class="almost-eta">Lands at ${escapeHtml(f.destination)} at ${formatAt(arrivalTime(f), null, false)}<br>in ${left}</p>
+      <button type="button" class="almost-close">Can't wait</button>
+    </div>`;
+  document.body.appendChild(el);
+  el.querySelector(".almost-close").addEventListener("click", () => el.remove());
+}
+
 // The list of eggs: tap the counter line to open it
 const EGG_LIST = [
   { key: "note",  name: "Secret note",  how: "Tap the headline 7 times.",          does: "Opens a hidden note from Josh.",       hint: "The headline has more to say. Be persistent." },
@@ -1926,6 +2399,11 @@ const EGG_LIST = [
   { key: "night", name: "Night owl",    how: "Open the app between 2 and 4 AM.",   does: "Josh tells you to go to sleep.",       hint: "Some things only happen when you should be asleep." },
   { key: "ko",    name: "K.O.",         how: "Send 10 punches in one day.",        does: "Knocks Josh out cold.",                hint: "Float like a butterfly…" },
   { key: "storm", name: "Kiss storm",   how: "Send 10 kisses in one day.",         does: "A storm of hearts, and Josh hears about it.", hint: "Some days one kiss isn't enough." },
+  { key: "early", name: "Early bird",   how: "Open the app between 4 and 6 AM.",   does: "Josh says good morning.",              hint: "Some things only happen before the sun comes up." },
+  { key: "sync",  name: "Great minds",  how: "Send one within a minute of Josh.",  does: "You were thinking the same thing.",    hint: "Timing is everything." },
+  { key: "home",  name: "Home state",   how: "Tap Pennsylvania on the map 5 times.", does: "Hearts rise from Josh's home.",      hint: "There's no place like home. The map knows where it is." },
+  { key: "streak", name: "The streak",  how: "Send something 7 days in a row.",    does: "A whole week without missing a day.", hint: "Don't skip a day. Not even one." },
+  { key: "photo", name: "Photo tap",    how: "Tap Josh's photo 10 times.",         does: "A photo Josh didn't want you to see.", hint: "Josh's face is very tappable." },
   // Retired: only listed (and counted) if she found it before it was removed
   { key: "shake", name: "Shake punch",  how: "Shook the phone to punch Josh.",     does: "Retired, but it still counts.",        hint: "", retired: true },
 ];
@@ -1952,20 +2430,19 @@ function openEggList() {
         <span class="egg-text"><strong>???</strong><span>${e.hint}</span></span>
       </div>`;
   }).join("");
-  const bday = birthdaySeen();
-  const bonus = `<div class="egg-row bonus${bday ? " found" : " locked"}">
-      <span class="egg-icon">${bday ? egg : lock}</span>
-      <span class="egg-text"><strong>${bday ? "Birthday mode" : "A special day"}</strong><span>${bday ? "On your birthday, the whole app celebrates." : "Wait for it."}</span></span>
-    </div>`;
   openSheet(`
     <p class="sheet-kicker">${josh ? `${otherName()} has found ${eggsFound.size} of ${eggTotal()}` : `${eggsFound.size} of ${eggTotal()} found`}</p>
     <h2 class="sheet-title">Easter eggs</h2>
-    <div class="egg-list">${rows}${bonus}</div>
-    ${josh ? "" : `<p class="sheet-note">Tap one you've found to see it again.</p>`}`);
+    <div class="egg-list">${rows}</div>
+    ${josh
+      ? `<button type="button" class="ghost small silly-pick">${joshProfile()?.silly_path ? "Change" : "Pick"} your silly photo</button>
+         <p class="sheet-note">The silly photo shows when she taps your photo 10 times.</p>`
+      : `<p class="sheet-note">Tap one you've found to see it again.</p>`}`);
 }
 
 // Replay a found egg from the list
 document.getElementById("sheet-body").addEventListener("click", (e) => {
+  if (e.target.closest(".silly-pick")) { sillyInput.click(); return; }
   const key = e.target.closest(".egg-row.found[data-egg]")?.dataset.egg;
   if (!key) return;
   closeSheet();
@@ -1975,6 +2452,11 @@ document.getElementById("sheet-body").addEventListener("click", (e) => {
   else if (key === "night") maybeNightOwl(true);
   else if (key === "ko") showKO();
   else if (key === "storm") showKissStorm();
+  else if (key === "early") maybeEarlyBird(true);
+  else if (key === "sync") showSync();
+  else if (key === "home") paFromList();
+  else if (key === "streak") showStreak();
+  else if (key === "photo") showSillyPhoto();
   else if (key === "shake") eggToast("This one's retired, but it still counts");
   else if (key === "roll") {
     const plane = document.querySelector(".map-plane");
@@ -2104,12 +2586,17 @@ async function maybeShowWelcome() {
 // ---------- WHAT'S NEW (Arc) / WELCOME (Mom) ----------
 // Shows once per phone. Change APP_VERSION to show a new "What's new" after a future update.
 
-const APP_VERSION = "3.0";
+const APP_VERSION = "3.2";
 const INTRO_ICON = {
   heart: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 20C7 16 4 13 4 9.5 4 7 6 5 8.3 5c1.6 0 3 1 3.7 2.4"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="0.1 3.2" d="M12 7.4C12.7 6 14.1 5 15.7 5 18 5 20 7 20 9.5c0 3.5-3 6.5-8 10.5"/></svg>`,
   bed: ICON.bed, cal: ICON.calendar, clock: ICON.clock, pin: ICON.pin, home: ICON.home,
   plane: ICON.plane(45),
   bolt: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M13 3L5 13h6l-1 8 8-10h-6l1-8z"/></svg>`,
+  mail: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M3 6h18v12H3z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M14 10h4M14 13h3M6 9h5v5H6z"/></svg>`,
+  back: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 7L4 12l5 5M4 12h11a5 5 0 0 1 5 5v1"/></svg>`,
+  list: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>`,
+  trophy: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M7 4h10v4a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 13v4M8 20h8M9 17h6"/></svg>`,
+  egg: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M12 3c3.5 0 7 6 7 11a7 7 0 0 1-14 0c0-5 3.5-11 7-11z"/></svg>`,
   gift: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 11h16v9H4zM3 7h18v4H3zM12 7v13M12 7c-1.5-3-5-3-5-1s3 1 5 1zm0 0c1.5-3 5-3 5-1s-3 1-5 1z"/></svg>`,
 };
 
@@ -2143,12 +2630,12 @@ function showIntro(kind) {
       <p class="kicker">JoshTracker ${APP_VERSION}</p>
       <h2>What's new</h2>
       <ul class="tour">
-        ${introItem(INTRO_ICON.heart, "A new look", "The new icon is our route: red is where I've been, the dots are my way back to you.")}
-        ${introItem(INTRO_ICON.bed, "Hotel stays", "The app now knows when I'm staying over, even on trips I drive to.")}
-        ${introItem(INTRO_ICON.cal, "Tap for details", "Tap any flight or hotel in This week to see times, places, and a map link.")}
-        ${introItem(INTRO_ICON.clock, "My time", "When I'm in another time zone, you'll see what time it is for me.")}
-        ${introItem(INTRO_ICON.bolt, "Faster", "Opens instantly, even with bad signal, and updates the moment something changes.")}
-        ${introItem(INTRO_ICON.gift, "Keep them coming", "Every kiss, hug, and punch counts. Don't stop now ;)")}
+        ${introItem(INTRO_ICON.mail, "Postcards", "Send each other a photo and a note from wherever you are.")}
+        ${introItem(INTRO_ICON.back, "Send one back", "When Josh sends you something, a button at the top sends one right back.")}
+        ${introItem(INTRO_ICON.list, "Recent", "The last 10 kisses, hugs, and punches, and who sent them. Tap See all for more.")}
+        ${introItem(INTRO_ICON.trophy, "Week in review", "Every Sunday: who sent the most this week.")}
+        ${introItem(INTRO_ICON.plane, "Almost there", "When Josh is flying home, you'll know.")}
+        ${introItem(INTRO_ICON.egg, "New easter eggs", "5 new ones are hidden. Check the egg list at the bottom for hints.")}
       </ul>`;
   introEl.innerHTML = `
     <div class="welcome-inner">
@@ -2197,6 +2684,7 @@ async function showCorrectView() {
     if (!isFamily) {
       loadVisit();
       loadScores(); loadRecent();
+      loadPostcards();
       checkMilestones();
       loadCoupons();
       loadEggs();
@@ -2204,6 +2692,10 @@ async function showCorrectView() {
       if (location.hash === "#demo-nightowl") maybeNightOwl(true); else maybeNightOwl();
       if (location.hash === "#demo-ko") showKO();
       if (location.hash === "#demo-storm") showKissStorm();
+      if (location.hash === "#demo-early") maybeEarlyBird(true); else maybeEarlyBird();
+      if (location.hash === "#demo-sync") showSync();
+      if (location.hash === "#demo-streak") showStreak();
+      if (location.hash === "#demo-photo") showSillyPhoto();
     }
     startTimers();
     startRealtime();
@@ -2249,7 +2741,7 @@ document.addEventListener("visibilitychange", () => {
   clearBadge();
   maybeNightOwl();
   loadFlights();
-  if (!isFamily) { loadScores(); loadRecent(); loadVisit(); checkMilestones(); }
+  if (!isFamily) { loadScores(); loadRecent(); loadPostcards(); loadVisit(); checkMilestones(); }
 });
 
 window.addEventListener("hashchange", () => { if (timers.length) loadFlights(); });

@@ -19,7 +19,7 @@ webpush.setVapidDetails(
 );
 
 const PER_MINUTE_LIMIT = 20;          // more than this in 60 seconds = refused
-const MILESTONES = [50, 100];         // Arc's 50th and 100th of each button unlock a note
+const MILESTONES = [50, 100, 150];    // Arc's 50th, 100th, and 150th of each button unlock a note (rows in the milestones table)
 
 const MESSAGES: Record<string, (name: string) => { title: string; body: string }> = {
   kiss: (n) => ({ title: `${n} sent you a kiss ♥`, body: "Mwah." }),
@@ -97,11 +97,32 @@ Deno.serve(async (req) => {
       return Response.json({ ok: true, redeemed: used }, { headers: cors });
     }
 
+    // A new postcard: {"postcard": 12}. Tell the other person (never family).
+    if (body.postcard) {
+      const { data: card } = await admin.from("postcards").select("id, sender_id, city, message")
+        .eq("id", body.postcard).maybeSingle();
+      if (!card || card.sender_id !== user.id) {
+        return Response.json({ ok: false, error: "Not your postcard" }, { status: 400, headers: cors });
+      }
+      const family = await familyIds();
+      const { data: all } = await admin.from("push_subscriptions").select("*");
+      const subs = (all || []).filter((s: any) => s.user_id !== user.id && !family.has(s.user_id));
+      const text = card.message.length > 120 ? card.message.slice(0, 117) + "…" : card.message;
+      const sent = await push(subs, {
+        title: card.city ? `Postcard from ${card.city}` : `A postcard from ${name}`,
+        body: `${name}: ${text}`,
+        tag: `postcard-${card.id}`,
+      });
+      return Response.json({ ok: true, sent }, { headers: cors });
+    }
+
     // Found an easter egg: {"egg": "combo"}. Saved once; Josh gets an alert when Arc finds one.
     const EGGS: Record<string, string> = {
       note: "the secret note", combo: "the combo", roll: "the barrel roll",
       shake: "the shake punch", meter: "the love meter", night: "the night owl",
       ko: "the K.O.", storm: "the kiss storm",
+      early: "the early bird", sync: "great minds", home: "home state",
+      streak: "the 7-day streak", photo: "your silly photo",
     };
     // These two alert Josh every time, not just the first time
     const EVERY_TIME: Record<string, { title: string; body: string }> = {
@@ -114,10 +135,10 @@ Deno.serve(async (req) => {
       const { count: found } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true })
         .eq("user_id", user.id).in("egg", Object.keys(EGGS));
       const isNew = (added || []).length > 0;
-      // 7 eggs, plus the retired shake punch if she found it before it was removed
+      // 12 eggs, plus the retired shake punch if she found it before it was removed
       const { count: hasShake } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true })
         .eq("user_id", user.id).eq("egg", "shake");
-      const total = 7 + (hasShake ? 1 : 0);
+      const total = 12 + (hasShake ? 1 : 0);
       if (EVERY_TIME[body.egg] && !isJosh) {
         const { data: joshSubs } = await admin.from("push_subscriptions").select("*").eq("user_id", adminId);
         await push(joshSubs || [], { ...EVERY_TIME[body.egg], tag: `egg-${body.egg}-${Date.now()}` });
@@ -208,7 +229,54 @@ Deno.serve(async (req) => {
       }
     }
 
-    return Response.json({ ok: true, sent, testMode, milestone, ko, storm }, { headers: cors });
+    // 8. Great minds: Arc and Josh both sent within 1 minute (either order). The egg is always hers.
+    let sync = false;
+    const { data: other } = await admin.from("pings").select("sender_id")
+      .neq("sender_id", user.id).gte("created_at", minuteAgo).limit(1);
+    if (other && other.length) {
+      const herId = isJosh ? other[0].sender_id : user.id;
+      const { data: added } = await admin.from("easter_eggs")
+        .upsert({ user_id: herId, egg: "sync" }, { onConflict: "user_id,egg", ignoreDuplicates: true }).select("egg");
+      if ((added || []).length) {
+        sync = true;
+        const joshSubs = (all || []).filter((s: any) => s.user_id === adminId);
+        const herSubs = (all || []).filter((s: any) => s.user_id === herId);
+        if (isJosh) {
+          await push(herSubs, { title: "Great minds", body: "You and Josh sent at the same time. You found an easter egg.", tag: "egg-sync" });
+        } else {
+          await push(joshSubs, { title: `${name} found an easter egg`, body: "Great minds: you both sent within a minute.", tag: "egg-sync" });
+        }
+      }
+    }
+
+    // 9. The streak: Arc sent something on each of the last 7 days (Eastern), today included
+    let streak = false;
+    if (!isJosh) {
+      const { count: has } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true })
+        .eq("user_id", user.id).eq("egg", "streak");
+      if (!has) {
+        const since = new Date(Date.now() - 8 * 86400000).toISOString();
+        const { data: mine } = await admin.from("pings").select("created_at").eq("sender_id", user.id).gte("created_at", since);
+        const etDay = (t: string | number) => new Date(t).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+        const days = new Set((mine || []).map((r: any) => etDay(r.created_at)));
+        const today = Date.parse(`${etDay(Date.now())}T12:00:00Z`);   // step back by calendar day (safe across DST)
+        let all7 = true;
+        for (let i = 0; i < 7; i++) {
+          if (!days.has(new Date(today - i * 86400000).toISOString().slice(0, 10))) { all7 = false; break; }
+        }
+        if (all7) {
+          const { data: added } = await admin.from("easter_eggs")
+            .upsert({ user_id: user.id, egg: "streak" }, { onConflict: "user_id,egg", ignoreDuplicates: true }).select("egg");
+          if ((added || []).length) {
+            streak = true;
+            const joshSubs = (all || []).filter((s: any) => s.user_id === adminId);
+            await push(joshSubs, { title: `${name} found an easter egg`, body: "7 days in a row. She hasn't missed a day.", tag: "egg-streak" });
+          }
+        }
+      }
+    }
+
+    return Response.json({ ok: true, sent, testMode, milestone, ko, storm, sync, streak }, { headers: cors });
   } catch (err) {
     return Response.json({ ok: false, error: String(err) }, { status: 500, headers: cors });
   }
