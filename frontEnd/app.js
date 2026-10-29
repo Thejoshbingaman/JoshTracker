@@ -1275,7 +1275,12 @@ function postcardHtml(p) {
         <span class="pc-stamp">${SCORE_ICON.kiss}</span>
         <p class="pc-from">Postcard from <strong>${escapeHtml(p.city || "somewhere")}</strong></p>
         <p class="pc-msg">${escapeHtml(p.message).replace(/\n/g, "<br>")}</p>
-        <p class="pc-sign">— ${from} · ${whenLabel(p.created_at)}${p.sender_id === myId ? `<button type="button" class="link-button pc-del" data-pc-del="${p.id}">Delete</button>` : ""}</p>
+        <p class="pc-sign">— ${from} · ${whenLabel(p.created_at)}</p>
+        <div class="pc-actions">
+          ${p.photo_path ? `<button type="button" class="pc-act" data-pc-save="photo" data-pc-id="${p.id}">Save photo</button>` : ""}
+          <button type="button" class="pc-act" data-pc-save="card" data-pc-id="${p.id}">Save postcard</button>
+          ${p.sender_id === myId ? `<button type="button" class="link-button pc-del" data-pc-del="${p.id}">Delete</button>` : ""}
+        </div>
       </div>
     </article>`;
 }
@@ -1306,6 +1311,187 @@ async function loadPostcards() {
   el.innerHTML = html;
   fillPostcardPhotos(el);
 }
+
+// ---------- SAVE A POSTCARD TO THE PHONE ----------
+// "Save photo" = the photo only. "Save postcard" = one picture of the whole card (photo, place, message, name).
+// iPhone: opens the share menu (tap "Save Image" to put it in Photos).
+// Android: downloads it (it shows in Photos / Gallery, in the Download folder).
+
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const HEART_PATH = "M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 5 6.4 5c2 0 3.6 1.1 4.6 2.6C12 6.1 13.6 5 15.6 5 19 5 21.1 8.5 19.6 11.8 17.5 16.4 12 21 12 21z";
+
+// The photo file itself, straight from storage (same as what was sent)
+async function postcardBlob(path) {
+  const { data, error } = await supabase.storage.from("postcards").download(path);
+  if (error || !data) throw error || new Error("No photo");
+  return data;
+}
+function loadImg(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+// Split text into lines that fit a width (long words are broken too)
+function wrapLines(ctx, text, width) {
+  const out = [];
+  for (const para of String(text).split("\n")) {
+    let line = "";
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width <= width) { line = test; continue; }
+      if (line) out.push(line);
+      line = word;
+      while (ctx.measureText(line).width > width) {          // one very long word
+        let i = line.length - 1;
+        while (i > 1 && ctx.measureText(line.slice(0, i)).width > width) i--;
+        out.push(line.slice(0, i)); line = line.slice(i);
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+// Draw the whole postcard as one JPEG, 1080 px wide
+async function postcardImage(p) {
+  const W = 1080, PAD = 72;
+  const SANS = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  const SERIF = 'Georgia, "Times New Roman", serif';
+  let photo = null, photoUrl = null;
+  if (p.photo_path) {
+    photoUrl = URL.createObjectURL(await postcardBlob(p.photo_path));
+    photo = await loadImg(photoUrl);
+  }
+  const photoH = photo ? Math.round(W * photo.naturalHeight / photo.naturalWidth) : 0;
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const textW = W - PAD * 2;
+  const stampW = 120, stampH = 140;
+  const city = (p.city || "somewhere").toUpperCase();
+  let citySize = 64;
+  ctx.font = `700 ${citySize}px ${SERIF}`;
+  while (citySize > 30 && ctx.measureText(city).width > textW - stampW - 30) { citySize -= 2; ctx.font = `700 ${citySize}px ${SERIF}`; }
+  ctx.font = `italic 46px ${SERIF}`;
+  const lines = wrapLines(ctx, p.message, textW);
+  const LINE = 66;
+  const headH = Math.max(stampH, 44 + citySize + 10);
+  const bodyH = PAD + headH + 40 + lines.length * LINE + 50 + 44 + PAD;
+  canvas.width = W;
+  canvas.height = photoH + bodyH;
+
+  // Paper
+  ctx.fillStyle = "#f4ecdd";
+  ctx.fillRect(0, 0, W, canvas.height);
+  if (photo) ctx.drawImage(photo, 0, 0, W, photoH);
+  let y = photoH + PAD;
+
+  // Stamp (top right)
+  ctx.save();
+  ctx.translate(W - PAD - stampW / 2, y + stampH / 2);
+  ctx.rotate(6 * Math.PI / 180);
+  ctx.fillStyle = "#fff7ec";
+  ctx.fillRect(-stampW / 2, -stampH / 2, stampW, stampH);
+  ctx.setLineDash([12, 8]); ctx.lineWidth = 5; ctx.strokeStyle = "#c9473f";
+  ctx.strokeRect(-stampW / 2, -stampH / 2, stampW, stampH);
+  ctx.setLineDash([]);
+  ctx.scale(2.8, 2.8); ctx.translate(-12, -12.5);
+  ctx.fillStyle = "#ff6f91";
+  ctx.fill(new Path2D(HEART_PATH));
+  ctx.restore();
+
+  // "POSTCARD FROM" and the city
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "#8a6f5c";
+  ctx.font = `600 30px ${SANS}`;
+  ctx.fillText("POSTCARD FROM", PAD, y + 34);
+  ctx.fillStyle = "#c9473f";
+  ctx.font = `700 ${citySize}px ${SERIF}`;
+  ctx.fillText(city, PAD, y + 44 + citySize);
+  y += headH + 40;
+
+  // Message
+  ctx.fillStyle = "#2b2320";
+  ctx.font = `italic 46px ${SERIF}`;
+  lines.forEach((line, i) => ctx.fillText(line, PAD, y + 46 + i * LINE));
+  y += lines.length * LINE + 50;
+
+  // Signature and date
+  const from = (p.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+  const date = new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: TIME_ZONE });
+  ctx.fillStyle = "#8a6f5c";
+  ctx.font = `32px ${SANS}`;
+  ctx.fillText(`— ${from} · ${date}`, PAD, y + 34);
+  ctx.textAlign = "right";
+  ctx.font = `600 24px ${SANS}`;
+  ctx.fillStyle = "rgba(138, 111, 92, 0.6)";
+  ctx.fillText("JoshTracker", W - PAD, y + 34);
+
+  if (photoUrl) URL.revokeObjectURL(photoUrl);
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => b ? resolve(b) : reject(new Error("Couldn't draw the postcard")), "image/jpeg", 0.92));
+}
+
+function postcardFileName(p, kind) {
+  const place = (p.city || "postcard").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "postcard";
+  const day = dayKeyET(p.created_at);
+  return kind === "photo" ? `${place}-photo-${day}.jpg` : `postcard-${place}-${day}.jpg`;
+}
+
+// iPhone: share menu. Everyone else: download.
+async function saveImage(blob, name) {
+  const file = new File([blob], name, { type: "image/jpeg" });
+  if (IS_IOS && navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return "done"; }
+    catch (err) {
+      if (err.name === "AbortError") return "cancel";      // she closed the share menu
+      if (err.name === "NotAllowedError") return "retry";  // took too long to get ready: needs one more tap
+      throw err;
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+  return "downloaded";
+}
+
+const preparedSaves = new Map();      // "12-card" -> { blob, name }, so a second tap is instant
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-pc-save]");
+  if (!b || b.disabled) return;
+  const kind = b.dataset.pcSave;
+  const p = postcards.find((x) => String(x.id) === b.dataset.pcId);
+  if (!p) return;
+  const key = `${p.id}-${kind}`;
+  const label = kind === "photo" ? "Save photo" : "Save postcard";
+  try {
+    let ready = preparedSaves.get(key);
+    if (!ready) {
+      b.disabled = true;
+      b.textContent = "Getting it ready…";
+      const blob = kind === "photo" ? await postcardBlob(p.photo_path) : await postcardImage(p);
+      ready = { blob, name: postcardFileName(p, kind) };
+      preparedSaves.set(key, ready);
+      b.disabled = false;
+    }
+    const result = await saveImage(ready.blob, ready.name);
+    if (result === "retry") { b.textContent = "Ready · tap to save"; return; }
+    if (result === "downloaded") eggToast("Saved. Find it in Photos, in Download.");
+    b.textContent = label;
+  } catch (err) {
+    preparedSaves.delete(key);
+    b.disabled = false;
+    b.textContent = label;
+    eggToast("Couldn't save it. Try again.");
+  }
+});
 
 // Shrink a photo so its longest side is at most 1600 px. The whole photo is kept (no crop).
 // Loaded through an <img>, so the phone's rotation info is applied (photos are not sideways).
