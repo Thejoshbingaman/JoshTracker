@@ -1687,11 +1687,18 @@ function fitPhoto(file, max = 1600) {
   });
 }
 
+// Two ways to add a photo: pick one you have, or open the camera and take one now
 const pcInput = document.createElement("input");
 pcInput.type = "file";
 pcInput.accept = "image/*";
 pcInput.hidden = true;
 document.body.appendChild(pcInput);
+const pcCamera = document.createElement("input");
+pcCamera.type = "file";
+pcCamera.accept = "image/*";
+pcCamera.setAttribute("capture", "environment");   // opens the back camera
+pcCamera.hidden = true;
+document.body.appendChild(pcCamera);
 let pcFile = null;      // the photo, already shrunk (a JPEG blob) for showing in the app
 let pcOriginal = null;  // the photo file exactly as picked (full size, camera info), for saving later
 
@@ -1703,16 +1710,24 @@ function openPostcardComposer() {
     <p class="sheet-kicker">New postcard</p>
     <h2 class="sheet-title">Send a postcard</h2>
     <form class="pc-form" id="pc-form">
-      <button type="button" class="pc-pick" id="pc-pick"><span>+ Add a photo</span></button>
+      <div class="pc-pick" id="pc-pick" role="button" tabindex="0"><span>Add a photo (optional)</span></div>
+      <div class="pc-pick-btns">
+        <button type="button" class="ghost small" data-pc-src="camera">${ICON_CAMERA} Take photo</button>
+        <button type="button" class="ghost small" data-pc-src="library">${ICON_GALLERY} Choose photo</button>
+      </div>
       <label class="field"><span>From</span><input id="pc-city" type="text" maxlength="40" placeholder="City" value="${escapeHtml(where)}"></label>
       <label class="field"><span>Message</span><textarea id="pc-msg" maxlength="500" rows="4" required placeholder="Wish you were here…"></textarea></label>
       <button type="submit" class="pc-submit">Send postcard</button>
       <p class="error" id="pc-error"></p>
     </form>`);
 }
-pcInput.addEventListener("change", async () => {
-  const file = pcInput.files?.[0];
-  pcInput.value = "";
+const ICON_CAMERA = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`;
+const ICON_GALLERY = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 17l5-5 4 4 2-2 5 5"/><circle cx="15.5" cy="9" r="1.5" fill="currentColor"/></svg>`;
+pcInput.addEventListener("change", () => usePcPhoto(pcInput));
+pcCamera.addEventListener("change", () => usePcPhoto(pcCamera));
+async function usePcPhoto(input) {
+  const file = input.files?.[0];
+  input.value = "";
   const pick = document.getElementById("pc-pick");
   if (!file || !pick) return;
   pick.disabled = true;
@@ -1729,9 +1744,11 @@ pcInput.addEventListener("change", async () => {
   } finally {
     pick.disabled = false;
   }
-});
+}
 document.addEventListener("click", (e) => {
   if (e.target.closest(".pc-new")) return openPostcardComposer();
+  const src = e.target.closest("[data-pc-src]");
+  if (src) return (src.dataset.pcSrc === "camera" ? pcCamera : pcInput).click();
   if (e.target.closest("#pc-pick")) return pcInput.click();
   const del = e.target.closest("[data-pc-del]");
   if (del) {

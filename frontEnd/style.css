@@ -1047,3 +1047,6 @@ textarea:focus { outline: 2px solid var(--red); outline-offset: 0; border-color:
 .pc-cform input { flex: 1; width: auto; min-width: 0; }
 .pc-cform button { flex-shrink: 0; width: auto; }
 @media (prefers-reduced-motion: reduce) { .pc-burst, .pc-like.on svg { animation: none !important; } }
+.pc-pick { display: grid; place-items: center; cursor: pointer; }
+.pc-pick-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: -6px; }
+.pc-pick-btns button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
