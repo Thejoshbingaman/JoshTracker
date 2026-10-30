@@ -116,6 +116,31 @@ Deno.serve(async (req) => {
       return Response.json({ ok: true, sent }, { headers: cors });
     }
 
+    // A like or a comment on a postcard: {"postcardLike": 12} or {"postcardComment": 34}. Tell the other person.
+    if (body.postcardLike || body.postcardComment) {
+      let postcardId = body.postcardLike, text = "";
+      if (body.postcardComment) {
+        const { data: c } = await admin.from("postcard_comments").select("postcard_id, sender_id, body")
+          .eq("id", body.postcardComment).maybeSingle();
+        if (!c || c.sender_id !== user.id) return Response.json({ ok: false, error: "Not your comment" }, { status: 400, headers: cors });
+        postcardId = c.postcard_id; text = c.body;
+      } else {
+        const { data: l } = await admin.from("postcard_likes").select("user_id")
+          .eq("postcard_id", postcardId).eq("user_id", user.id).maybeSingle();
+        if (!l) return Response.json({ ok: false, error: "No like" }, { status: 400, headers: cors });
+      }
+      const { data: card } = await admin.from("postcards").select("id, city").eq("id", postcardId).maybeSingle();
+      if (!card) return Response.json({ ok: false, error: "No postcard" }, { status: 400, headers: cors });
+      const family = await familyIds();
+      const { data: all } = await admin.from("push_subscriptions").select("*");
+      const subs = (all || []).filter((s: any) => s.user_id !== user.id && !family.has(s.user_id));
+      const where = card.city ? `the ${card.city} postcard` : "your postcard";
+      const sent = await push(subs, body.postcardComment
+        ? { title: `${name} commented on ${where}`, body: text.length > 120 ? text.slice(0, 117) + "…" : text, tag: `pc-comment-${card.id}-${Date.now()}` }
+        : { title: `${name} liked ${where}`, body: "Tap to see it.", tag: `pc-like-${card.id}` });
+      return Response.json({ ok: true, sent }, { headers: cors });
+    }
+
     // Found an easter egg: {"egg": "combo"}. Saved once; Josh gets an alert when Arc finds one.
     const EGGS: Record<string, string> = {
       note: "the secret note", combo: "the combo", roll: "the barrel roll",

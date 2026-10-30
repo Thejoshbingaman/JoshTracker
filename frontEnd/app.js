@@ -483,7 +483,10 @@ function renderTimeline() {
 
   const active = flights.filter((f) => phaseOf(f) !== "landed" && phaseOf(f) !== "canceled");
   const upcomingStays = stays.filter((s) => dayKeyET(s.check_out) >= dayKeyET(Date.now()));
-  if (active.length === 0 && upcomingStays.length === 0) {
+  // The next date (from the "Next date" card), shown on its day
+  const dateDay = visit?.at && new Date(visit.at).getTime() > Date.now() - 6 * 3600000 ? dayKeyET(visit.at) : null;
+  const dateSoon = dateDay && dateDay <= dayKeyET(Date.now() + 6 * 86400000);
+  if (active.length === 0 && upcomingStays.length === 0 && !dateSoon) {
     el.classList.add("hidden");
     title.classList.add("hidden");
     return;
@@ -549,6 +552,9 @@ function renderTimeline() {
     } else {
       body = `<span class="tl-where">In ${city(where)}</span>`;
     }
+    if (key === dateDay) {
+      body += `<span class="tl-date tl-tap" data-tl-visit role="button" tabindex="0">${SCORE_ICON.kiss}<span>${escapeHtml(visit.title || "Date")} · ${formatAt(visit.at, null, false)}</span></span>`;
+    }
 
     rows.push(`
       <div class="tl-row${i === 0 ? " tl-today" : ""}">
@@ -565,6 +571,11 @@ function renderTimeline() {
   title.classList.remove("hidden");
 }
 let lastTimelineHtml = "";
+
+// Tap the date in the week list: jump to the "Next date" card
+document.getElementById("timeline").addEventListener("click", (e) => {
+  if (e.target.closest("[data-tl-visit]")) document.getElementById("visit-card").scrollIntoView({ behavior: "smooth", block: "center" });
+});
 
 // Plane icon direction for the week list: east-bound points right, west-bound points left
 function f0dir(f) {
@@ -1266,16 +1277,41 @@ async function postcardPhoto(path) {
   if (data?.signedUrl) postcardUrls[path] = data.signedUrl;
   return postcardUrls[path] || null;
 }
+const CHAT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" d="M4 5h16v11H9l-5 4z"/></svg>`;
+const LIKE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${"M12 21s-7.5-4.6-9.6-9.2C.9 8.5 3 5 6.4 5c2 0 3.6 1.1 4.6 2.6C12 6.1 13.6 5 15.6 5 19 5 21.1 8.5 19.6 11.8 17.5 16.4 12 21 12 21z"}"/></svg>`;
+const likeCount = (p) => (p.postcard_likes || []).length;
+const iLiked = (p) => (p.postcard_likes || []).some((l) => l.user_id === myId);
+const commentCount = (p) => (p.postcard_comments || []).length;
+const commentWord = (n) => n === 0 ? "Comment" : n === 1 ? "1 comment" : `${n} comments`;
+function reactHtml(p) {
+  if (!p.postcard_likes) return "";          // likes and comments aren't set up yet
+  return `
+        <div class="pc-react">
+          <button type="button" class="pc-like${iLiked(p) ? " on" : ""}" data-pc-like="${p.id}" aria-label="Like">${LIKE_ICON}<span>${likeCount(p) || ""}</span></button>
+          <button type="button" class="pc-cmt" data-pc-comments="${p.id}">${CHAT_ICON}<span>${commentWord(commentCount(p))}</span></button>
+        </div>`;
+}
+// Update like and comment buttons where they already are (the card and any open sheet), without redrawing photos
+function syncReactions() {
+  for (const p of postcards) {
+    document.querySelectorAll(`[data-pc-like="${p.id}"]`).forEach((b) => {
+      b.classList.toggle("on", iLiked(p));
+      b.querySelector("span").textContent = likeCount(p) || "";
+    });
+    document.querySelectorAll(`[data-pc-comments="${p.id}"] span`).forEach((sp) => { sp.textContent = commentWord(commentCount(p)); });
+  }
+}
 function postcardHtml(p) {
   const from = (p.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
   return `
     <article class="postcard">
-      ${p.photo_path ? `<div class="pc-photo" data-pc-photo="${escapeHtml(p.photo_path)}"></div>` : ""}
+      ${p.photo_path ? `<div class="pc-photo" data-pc-photo="${escapeHtml(p.photo_path)}" data-pc-id="${p.id}"></div>` : ""}
       <div class="pc-body">
         <span class="pc-stamp">${SCORE_ICON.kiss}</span>
         <p class="pc-from">Postcard from <strong>${escapeHtml(p.city || "somewhere")}</strong></p>
         <p class="pc-msg">${escapeHtml(p.message).replace(/\n/g, "<br>")}</p>
         <p class="pc-sign">— ${from} · ${whenLabel(p.created_at)}</p>
+        ${reactHtml(p)}
         <div class="pc-actions">
           ${p.photo_path ? `<button type="button" class="pc-act" data-pc-save="photo" data-pc-id="${p.id}">Save photo</button>` : ""}
           <button type="button" class="pc-act" data-pc-save="card" data-pc-id="${p.id}">Save postcard</button>
@@ -1294,9 +1330,14 @@ let lastPostcardHtml = "";
 async function loadPostcards() {
   const el = document.getElementById("postcard-card");
   if (!el || isFamily) return;
-  const { data, error } = await supabase.from("postcards").select("*").order("created_at", { ascending: false }).limit(50);
+  let { data, error } = await supabase.from("postcards")
+    .select("*, postcard_likes(user_id), postcard_comments(id)").order("created_at", { ascending: false }).limit(50);
+  if (error) {   // likes and comments aren't set up yet: postcards only
+    ({ data, error } = await supabase.from("postcards").select("*").order("created_at", { ascending: false }).limit(50));
+  }
   if (error) { el.classList.add("hidden"); return; }      // the postcards table isn't made yet
   postcards = data || [];
+  syncReactions();
   const p = postcards[0];
   const html = `
     <div class="section-row">
@@ -1312,8 +1353,124 @@ async function loadPostcards() {
   fillPostcardPhotos(el);
 }
 
+
+// ---------- POSTCARD LIKES AND COMMENTS ----------
+
+async function toggleLike(id, onlyLike = false) {
+  const p = postcards.find((x) => String(x.id) === String(id));
+  if (!p || !p.postcard_likes) return;
+  const liked = iLiked(p);
+  if (liked && onlyLike) return;                      // a double-tap never un-likes
+  p.postcard_likes = liked ? p.postcard_likes.filter((l) => l.user_id !== myId) : [...p.postcard_likes, { user_id: myId }];
+  syncReactions();                                    // show it at once
+  if (location.hash.startsWith("#demo")) return;
+  const { error } = liked
+    ? await supabase.from("postcard_likes").delete().eq("postcard_id", p.id).eq("user_id", myId)
+    : await supabase.from("postcard_likes").insert({ postcard_id: p.id });
+  if (error) { eggToast("Couldn't save that"); loadPostcards(); return; }
+  if (!liked && p.sender_id !== myId) supabase.functions.invoke("send-kiss", { body: { postcardLike: p.id } }).catch(() => {});
+}
+
+// Double-tap a postcard photo to like it
+function likeBurst(box) {
+  const h = document.createElement("span");
+  h.className = "pc-burst";
+  h.innerHTML = LIKE_ICON;
+  box.appendChild(h);
+  setTimeout(() => h.remove(), 900);
+}
+let lastPhotoTap = { el: null, t: 0 };
+document.addEventListener("click", (e) => {
+  const ph = e.target.closest(".pc-photo[data-pc-id]");
+  if (!ph) return;
+  const now = Date.now();
+  if (lastPhotoTap.el === ph && now - lastPhotoTap.t < 350) {
+    lastPhotoTap = { el: null, t: 0 };
+    likeBurst(ph);
+    toggleLike(ph.dataset.pcId, true);
+  } else {
+    lastPhotoTap = { el: ph, t: now };
+  }
+});
+
+let commentsFor = null;      // which postcard's comments are open
+function openComments(id) {
+  const p = postcards.find((x) => String(x.id) === String(id));
+  if (!p) return;
+  commentsFor = String(p.id);
+  openSheet(`
+    <p class="sheet-kicker">Postcard from ${escapeHtml(p.city || "somewhere")}</p>
+    <h2 class="sheet-title">Comments</h2>
+    <div class="pc-mini">
+      ${p.photo_path ? `<div class="pc-mini-photo" data-pc-photo="${escapeHtml(p.photo_path)}"></div>` : ""}
+      <p>${escapeHtml(p.message)}</p>
+    </div>
+    <div class="pc-thread" id="pc-thread"><p class="sheet-note">Loading…</p></div>
+    <form class="pc-cform" id="pc-cform">
+      <input id="pc-ctext" type="text" maxlength="300" placeholder="Say something nice…" autocomplete="off" enterkeyhint="send">
+      <button type="submit" class="small">Send</button>
+    </form>`);
+  fillPostcardPhotos(document.getElementById("sheet-body"));
+  loadComments();
+}
+async function loadComments() {
+  const box = document.getElementById("pc-thread");
+  if (!commentsFor || !box) return;
+  const { data, error } = await supabase.from("postcard_comments").select("*")
+    .eq("postcard_id", commentsFor).order("created_at", { ascending: true });
+  if (error) { box.innerHTML = `<p class="sheet-note">Comments aren't set up yet.</p>`; return; }
+  box.innerHTML = (data || []).map((c, i) => {
+    const name = (c.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+    return `
+      <div class="pc-c">
+        <span class="avatar small" data-c="${i}" data-who="${name}">${name.slice(0, 1)}</span>
+        <div class="pc-c-body">
+          <p><b>${name}</b> ${escapeHtml(c.body)}</p>
+          <span class="pc-c-when">${whenLabel(c.created_at)}${c.sender_id === myId ? ` · <button type="button" class="link-button pc-c-del" data-c-del="${c.id}">Delete</button>` : ""}</span>
+        </div>
+      </div>`;
+  }).join("") || `<p class="sheet-note">No comments yet. Be the first.</p>`;
+  box.querySelectorAll("[data-c]").forEach((a) => {
+    const c = data[a.dataset.c];
+    paintAvatar(a, profiles.find((x) => x.id === c.sender_id) || (a.dataset.who === "Josh" ? joshProfile() : arcProfile()), a.dataset.who);
+  });
+}
+document.addEventListener("click", (e) => {
+  const like = e.target.closest("[data-pc-like]");
+  if (like) return toggleLike(like.dataset.pcLike);
+  const cm = e.target.closest("[data-pc-comments]");
+  if (cm) return openComments(cm.dataset.pcComments);
+  const del = e.target.closest("[data-c-del]");
+  if (del) {
+    if (!del.classList.contains("sure")) {
+      del.classList.add("sure"); del.textContent = "Tap again to delete";
+      setTimeout(() => { del.classList.remove("sure"); del.textContent = "Delete"; }, 3000);
+      return;
+    }
+    supabase.from("postcard_comments").delete().eq("id", del.dataset.cDel).then(() => { loadComments(); loadPostcards(); });
+  }
+});
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "pc-cform") return;
+  e.preventDefault();
+  const input = document.getElementById("pc-ctext");
+  const text = input.value.trim();
+  if (!text || !commentsFor) return;
+  if (location.hash.startsWith("#demo")) { input.value = ""; eggToast("Preview: comment not sent"); return; }
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  const { data, error } = await supabase.from("postcard_comments")
+    .insert({ postcard_id: Number(commentsFor), sender_name: myName, body: text }).select("id").single();
+  btn.disabled = false;
+  if (error) { eggToast("Couldn't send it. Try again."); return; }
+  input.value = "";
+  supabase.functions.invoke("send-kiss", { body: { postcardComment: data.id } }).catch(() => {});
+  loadComments();
+  loadPostcards();
+});
+
 // ---------- SAVE A POSTCARD TO THE PHONE ----------
-// "Save photo" = the photo only. "Save postcard" = one picture of the whole card (photo, place, message, name).
+// "Save photo" = the original photo file, exactly as it was sent (full size, with the camera info the phone kept). "Save postcard" = one picture of the whole card (photo, place, message, name).
 // iPhone: opens the share menu (tap "Save Image" to put it in Photos).
 // Android: downloads it (it shows in Photos / Gallery, in the Download folder).
 
@@ -1355,38 +1512,54 @@ function wrapLines(ctx, text, width) {
   return out;
 }
 
-// Draw the whole postcard as one JPEG, 1080 px wide
+// Draw the whole postcard as one JPEG. As wide as the photo (1080 to 3000 px), so the photo keeps its detail.
 async function postcardImage(p) {
-  const W = 1080, PAD = 72;
   const SANS = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
   const SERIF = 'Georgia, "Times New Roman", serif';
-  let photo = null, photoUrl = null;
-  if (p.photo_path) {
-    photoUrl = URL.createObjectURL(await postcardBlob(p.photo_path));
-    photo = await loadImg(photoUrl);
+  let photo = null;
+  const urls = [];
+  for (const path of [p.original_path, p.photo_path].filter(Boolean)) {   // the original first; the small copy if the phone can't read it
+    try {
+      const u = URL.createObjectURL(await postcardBlob(path));
+      urls.push(u);
+      photo = await loadImg(u);
+      break;
+    } catch { /* try the next one */ }
   }
-  const photoH = photo ? Math.round(W * photo.naturalHeight / photo.naturalWidth) : 0;
-
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  const textW = W - PAD * 2;
-  const stampW = 120, stampH = 140;
   const city = (p.city || "somewhere").toUpperCase();
-  let citySize = 64;
-  ctx.font = `700 ${citySize}px ${SERIF}`;
-  while (citySize > 30 && ctx.measureText(city).width > textW - stampW - 30) { citySize -= 2; ctx.font = `700 ${citySize}px ${SERIF}`; }
-  ctx.font = `italic 46px ${SERIF}`;
-  const lines = wrapLines(ctx, p.message, textW);
-  const LINE = 66;
-  const headH = Math.max(stampH, 44 + citySize + 10);
-  const bodyH = PAD + headH + 40 + lines.length * LINE + 50 + 44 + PAD;
-  canvas.width = W;
-  canvas.height = photoH + bodyH;
 
-  // Paper
+  // Work out the size. Phones can't draw a picture much bigger than 16 million pixels.
+  let W = photo ? Math.min(3000, Math.max(1080, photo.naturalWidth)) : 1080;
+  let L;
+  for (let tries = 0; tries < 4; tries++) {
+    const k = W / 1080, S = (n) => Math.round(n * k);
+    const PAD = S(72), textW = W - PAD * 2, stampW = S(120), stampH = S(140);
+    let citySize = S(64);
+    ctx.font = `700 ${citySize}px ${SERIF}`;
+    while (citySize > S(30) && ctx.measureText(city).width > textW - stampW - S(30)) { citySize -= S(2) || 1; ctx.font = `700 ${citySize}px ${SERIF}`; }
+    ctx.font = `italic ${S(46)}px ${SERIF}`;
+    const lines = wrapLines(ctx, p.message, textW);
+    const photoH = photo ? Math.round(W * photo.naturalHeight / photo.naturalWidth) : 0;
+    const headH = Math.max(stampH, S(44) + citySize + S(10));
+    const H = photoH + PAD + headH + S(40) + lines.length * S(66) + S(50) + S(44) + PAD;
+    L = { W, H, k, S, PAD, stampW, stampH, citySize, lines, photoH, headH };
+    if (W * H <= 16e6 || W <= 1080) break;
+    W = Math.max(1080, Math.floor(W * Math.sqrt(16e6 / (W * H)) * 0.98));
+  }
+  const { H, S, PAD, stampW, stampH, citySize, lines, photoH, headH } = L;
+  W = L.W;
+  canvas.width = W;
+  canvas.height = H;
+
+  // Paper and photo
   ctx.fillStyle = "#f4ecdd";
-  ctx.fillRect(0, 0, W, canvas.height);
-  if (photo) ctx.drawImage(photo, 0, 0, W, photoH);
+  ctx.fillRect(0, 0, W, H);
+  if (photo) {
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(photo, 0, 0, W, photoH);
+  }
   let y = photoH + PAD;
 
   // Stamp (top right)
@@ -1395,10 +1568,10 @@ async function postcardImage(p) {
   ctx.rotate(6 * Math.PI / 180);
   ctx.fillStyle = "#fff7ec";
   ctx.fillRect(-stampW / 2, -stampH / 2, stampW, stampH);
-  ctx.setLineDash([12, 8]); ctx.lineWidth = 5; ctx.strokeStyle = "#c9473f";
+  ctx.setLineDash([S(12), S(8)]); ctx.lineWidth = S(5); ctx.strokeStyle = "#c9473f";
   ctx.strokeRect(-stampW / 2, -stampH / 2, stampW, stampH);
   ctx.setLineDash([]);
-  ctx.scale(2.8, 2.8); ctx.translate(-12, -12.5);
+  ctx.scale(2.8 * L.k, 2.8 * L.k); ctx.translate(-12, -12.5);
   ctx.fillStyle = "#ff6f91";
   ctx.fill(new Path2D(HEART_PATH));
   ctx.restore();
@@ -1406,44 +1579,45 @@ async function postcardImage(p) {
   // "POSTCARD FROM" and the city
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = "#8a6f5c";
-  ctx.font = `600 30px ${SANS}`;
-  ctx.fillText("POSTCARD FROM", PAD, y + 34);
+  ctx.font = `600 ${S(30)}px ${SANS}`;
+  ctx.fillText("POSTCARD FROM", PAD, y + S(34));
   ctx.fillStyle = "#c9473f";
   ctx.font = `700 ${citySize}px ${SERIF}`;
-  ctx.fillText(city, PAD, y + 44 + citySize);
-  y += headH + 40;
+  ctx.fillText(city, PAD, y + S(44) + citySize);
+  y += headH + S(40);
 
   // Message
   ctx.fillStyle = "#2b2320";
-  ctx.font = `italic 46px ${SERIF}`;
-  lines.forEach((line, i) => ctx.fillText(line, PAD, y + 46 + i * LINE));
-  y += lines.length * LINE + 50;
+  ctx.font = `italic ${S(46)}px ${SERIF}`;
+  lines.forEach((line, i) => ctx.fillText(line, PAD, y + S(46) + i * S(66)));
+  y += lines.length * S(66) + S(50);
 
   // Signature and date
   const from = (p.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
   const date = new Date(p.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: TIME_ZONE });
   ctx.fillStyle = "#8a6f5c";
-  ctx.font = `32px ${SANS}`;
-  ctx.fillText(`— ${from} · ${date}`, PAD, y + 34);
+  ctx.font = `${S(32)}px ${SANS}`;
+  ctx.fillText(`— ${from} · ${date}`, PAD, y + S(34));
   ctx.textAlign = "right";
-  ctx.font = `600 24px ${SANS}`;
+  ctx.font = `600 ${S(24)}px ${SANS}`;
   ctx.fillStyle = "rgba(138, 111, 92, 0.6)";
-  ctx.fillText("JoshTracker", W - PAD, y + 34);
+  ctx.fillText("JoshTracker", W - PAD, y + S(34));
 
-  if (photoUrl) URL.revokeObjectURL(photoUrl);
+  urls.forEach((u) => URL.revokeObjectURL(u));
   return new Promise((resolve, reject) =>
-    canvas.toBlob((b) => b ? resolve(b) : reject(new Error("Couldn't draw the postcard")), "image/jpeg", 0.92));
+    canvas.toBlob((b) => b ? resolve(b) : reject(new Error("Couldn't draw the postcard")), "image/jpeg", 0.95));
 }
 
-function postcardFileName(p, kind) {
+function postcardFileName(p, kind, type = "image/jpeg") {
   const place = (p.city || "postcard").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "postcard";
   const day = dayKeyET(p.created_at);
-  return kind === "photo" ? `${place}-photo-${day}.jpg` : `postcard-${place}-${day}.jpg`;
+  const ext = { "image/png": "png", "image/heic": "heic", "image/heif": "heif", "image/webp": "webp" }[type] || "jpg";
+  return kind === "photo" ? `${place}-photo-${day}.${ext}` : `postcard-${place}-${day}.jpg`;
 }
 
 // iPhone: share menu. Everyone else: download.
 async function saveImage(blob, name) {
-  const file = new File([blob], name, { type: "image/jpeg" });
+  const file = new File([blob], name, { type: blob.type || "image/jpeg" });
   if (IS_IOS && navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return "done"; }
     catch (err) {
@@ -1476,8 +1650,8 @@ document.addEventListener("click", async (e) => {
     if (!ready) {
       b.disabled = true;
       b.textContent = "Getting it ready…";
-      const blob = kind === "photo" ? await postcardBlob(p.photo_path) : await postcardImage(p);
-      ready = { blob, name: postcardFileName(p, kind) };
+      const blob = kind === "photo" ? await postcardBlob(p.original_path || p.photo_path) : await postcardImage(p);
+      ready = { blob, name: postcardFileName(p, kind, blob.type) };
       preparedSaves.set(key, ready);
       b.disabled = false;
     }
@@ -1518,10 +1692,12 @@ pcInput.type = "file";
 pcInput.accept = "image/*";
 pcInput.hidden = true;
 document.body.appendChild(pcInput);
-let pcFile = null;      // the photo, already shrunk (a JPEG blob)
+let pcFile = null;      // the photo, already shrunk (a JPEG blob) for showing in the app
+let pcOriginal = null;  // the photo file exactly as picked (full size, camera info), for saving later
 
 function openPostcardComposer() {
   pcFile = null;
+  pcOriginal = null;
   const where = myName.toLowerCase() === "josh" ? (currentStay()?.city || "") : "";
   openSheet(`
     <p class="sheet-kicker">New postcard</p>
@@ -1542,11 +1718,13 @@ pcInput.addEventListener("change", async () => {
   pick.disabled = true;
   pick.innerHTML = `<span>Loading photo…</span>`;
   try {
-    pcFile = await fitPhoto(file);            // shrink once here; the preview and the upload use the same small file
+    pcFile = await fitPhoto(file);            // small copy for the app
+    pcOriginal = file;                        // the untouched original, uploaded too
     pick.innerHTML = `<img src="${URL.createObjectURL(pcFile)}" alt="">`;
     pick.classList.add("has-photo");
   } catch (err) {
     pcFile = null;
+    pcOriginal = null;
     pick.innerHTML = `<span>${escapeHtml(err.message)}. Try another.</span>`;
   } finally {
     pick.disabled = false;
@@ -1588,15 +1766,24 @@ document.addEventListener("submit", async (e) => {
   if (location.hash.startsWith("#demo")) { closeSheet(); eggToast("Preview: postcard not sent"); return; }
   btn.disabled = true; btn.textContent = "Sending…"; err.textContent = "";
   try {
-    let photo_path = null;
+    let photo_path = null, original_path = null;
     if (pcFile) {
-      const blob = pcFile;
-      photo_path = `${myId}/${Date.now()}.jpg`;
-      const { error } = await supabase.storage.from("postcards").upload(photo_path, blob, { contentType: "image/jpeg" });
+      const stamp = Date.now();
+      photo_path = `${myId}/${stamp}.jpg`;
+      const { error } = await supabase.storage.from("postcards").upload(photo_path, pcFile, { contentType: "image/jpeg" });
       if (error) throw error;
+      // The full-quality original (up to 45 MB). If it fails, the postcard still sends.
+      if (pcOriginal && pcOriginal.size <= 45 * 1024 * 1024) {
+        btn.textContent = "Sending full-quality photo…";
+        const type = pcOriginal.type || "image/jpeg";
+        const ext = { "image/jpeg": "jpg", "image/png": "png", "image/heic": "heic", "image/heif": "heif", "image/webp": "webp" }[type] || "jpg";
+        const path = `${myId}/${stamp}-original.${ext}`;
+        const up = await supabase.storage.from("postcards").upload(path, pcOriginal, { contentType: type });
+        if (!up.error) original_path = path;
+      }
     }
     const { data, error } = await supabase.from("postcards")
-      .insert({ sender_name: myName, city: city || null, message, photo_path }).select("id").single();
+      .insert({ sender_name: myName, city: city || null, message, photo_path, original_path }).select("id").single();
     if (error) throw error;
     supabase.functions.invoke("send-kiss", { body: { postcard: data.id } }).catch(() => {});
     closeSheet();
@@ -1890,6 +2077,8 @@ function startRealtime() {
   if (!isFamily) {
     pcChannel = supabase.channel("joshtracker-postcards")
       .on("postgres_changes", { event: "*", schema: "public", table: "postcards" }, debounce(loadPostcards))
+      .on("postgres_changes", { event: "*", schema: "public", table: "postcard_likes" }, debounce(loadPostcards))
+      .on("postgres_changes", { event: "*", schema: "public", table: "postcard_comments" }, debounce(() => { loadPostcards(); loadComments(); }))
       .subscribe();
   }
 }
@@ -2809,7 +2998,7 @@ async function maybeShowWelcome() {
 // ---------- WHAT'S NEW (Arc) / WELCOME (Mom) ----------
 // Shows once per phone. Change APP_VERSION to show a new "What's new" after a future update.
 
-const APP_VERSION = "3.2";
+const APP_VERSION = "3.3";
 const INTRO_ICON = {
   heart: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 20C7 16 4 13 4 9.5 4 7 6 5 8.3 5c1.6 0 3 1 3.7 2.4"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="0.1 3.2" d="M12 7.4C12.7 6 14.1 5 15.7 5 18 5 20 7 20 9.5c0 3.5-3 6.5-8 10.5"/></svg>`,
   bed: ICON.bed, cal: ICON.calendar, clock: ICON.clock, pin: ICON.pin, home: ICON.home,
@@ -2853,12 +3042,9 @@ function showIntro(kind) {
       <p class="kicker">JoshTracker ${APP_VERSION}</p>
       <h2>What's new</h2>
       <ul class="tour">
-        ${introItem(INTRO_ICON.mail, "Postcards", "Send each other a photo and a note from wherever you are.")}
-        ${introItem(INTRO_ICON.back, "Send one back", "When Josh sends you something, a button at the top sends one right back.")}
-        ${introItem(INTRO_ICON.list, "Recent", "The last 10 kisses, hugs, and punches, and who sent them. Tap See all for more.")}
-        ${introItem(INTRO_ICON.trophy, "Week in review", "Every Sunday: who sent the most this week.")}
-        ${introItem(INTRO_ICON.plane, "Almost there", "When Josh is flying home, you'll know.")}
-        ${introItem(INTRO_ICON.egg, "New easter eggs", "5 new ones are hidden. Check the egg list at the bottom for hints.")}
+        ${introItem(INTRO_ICON.heart, "Like and comment", "Tap the heart on a postcard, or double-tap its photo. Tap Comment to write back.")}
+        ${introItem(INTRO_ICON.cal, "Dates in the week", "Our next date now shows on its day in the week list.")}
+        ${introItem(INTRO_ICON.mail, "Full-quality photos", "Save photo now saves the full-size original, not a smaller copy.")}
       </ul>`;
   introEl.innerHTML = `
     <div class="welcome-inner">
