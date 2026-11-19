@@ -47,7 +47,7 @@ const isSundayET = () => dow(Date.now()) === "Sun";
 // ---------- build the message ----------
 async function buildPreview() {
   const { data: flights } = await supabase.from("flights").select("*").not("hidden", "is", true).order("departureUtc");
-  const { data: stays } = await supabase.from("stays").select("*").order("check_in");
+  const { data: stays } = await supabase.from("stays").select("*").not("hidden", "is", true).order("check_in");
 
   // The 7 days from tomorrow (Monday) through next Sunday, at midday to dodge DST edges
   const days: { key: string; name: string }[] = [];

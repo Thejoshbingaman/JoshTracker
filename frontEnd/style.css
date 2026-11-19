@@ -1081,6 +1081,7 @@ textarea:focus { outline: 2px solid var(--red); outline-offset: 0; border-color:
 .flight-tools .link-button { padding: 4px 0; }
 .fl-hidden-link { color: var(--faint) !important; }
 .sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+.sheet-actions.one { grid-template-columns: 1fr; }
 .fl-remove.sure { color: var(--red-soft); border-color: rgba(255, 69, 69, 0.5); }
 .fl-hidden-row { align-items: center; gap: 12px; }
 .fl-hidden-row small { color: var(--faint); font-size: 12px; }

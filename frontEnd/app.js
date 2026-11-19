@@ -590,6 +590,7 @@ function f0dir(f) {
 // For when the calendar is wrong: remove a flight, change it, or add one by hand.
 
 let hiddenFlights = [];
+let hiddenStays = [];
 const isJoshMe = () => myName.toLowerCase() === "josh";
 
 async function callFn(name, body) {
@@ -613,13 +614,22 @@ function flightToolsHtml(f) {
     <p class="sheet-note">Only you see these. Use them when your calendar is wrong.</p>`;
 }
 
+function stayToolsHtml(s) {
+  if (!isJoshMe()) return "";
+  return `
+    <div class="sheet-actions one">
+      <button type="button" class="ghost small fl-remove" data-st-remove="${s.id}">Remove stay</button>
+    </div>
+    <p class="sheet-note">Only you see this. Use it when your calendar is wrong.</p>`;
+}
+
 function renderFlightTools() {
   const el = document.getElementById("flight-tools");
   if (!el) return;
   if (!isJoshMe() || isFamily) { el.classList.add("hidden"); return; }
   el.innerHTML = `
     <button type="button" class="link-button" data-fl-add>+ Add a flight</button>
-    ${hiddenFlights.length ? `<button type="button" class="link-button fl-hidden-link" data-fl-hidden>Removed flights (${hiddenFlights.length})</button>` : ""}`;
+    ${hiddenFlights.length + hiddenStays.length ? `<button type="button" class="link-button fl-hidden-link" data-fl-hidden>Removed (${hiddenFlights.length + hiddenStays.length})</button>` : ""}`;
   el.classList.remove("hidden");
 }
 
@@ -641,13 +651,19 @@ function openFlightForm(replaces = null) {
 function openHiddenFlights() {
   openSheet(`
     <p class="sheet-kicker">Only you see these</p>
-    <h2 class="sheet-title">Removed flights</h2>
+    <h2 class="sheet-title">Removed</h2>
     <div class="sheet-rows">
       ${hiddenFlights.map((f) => `
         <div class="sheet-row fl-hidden-row">
           <span>${f.flightNumber} · ${f.origin} → ${f.destination}<br><small>${formatAt(departureTime(f))}</small></span>
           <button type="button" class="ghost small" data-fl-unhide="${f.id}">Put back</button>
-        </div>`).join("") || `<p class="sheet-note">None.</p>`}
+        </div>`).join("")}
+      ${hiddenStays.map((s) => `
+        <div class="sheet-row fl-hidden-row">
+          <span>${escapeHtml(s.hotel || "Hotel")} · ${escapeHtml(s.city || "")}<br><small>${formatDay(s.check_in)} to ${formatDay(s.check_out)}</small></span>
+          <button type="button" class="ghost small" data-st-unhide="${s.id}">Put back</button>
+        </div>`).join("")}
+      ${hiddenFlights.length + hiddenStays.length ? "" : `<p class="sheet-note">None.</p>`}
     </div>`);
 }
 
@@ -658,19 +674,25 @@ document.addEventListener("click", async (e) => {
   if (ch) return openFlightForm(ch.dataset.flChange);
   const rm = e.target.closest("[data-fl-remove]");
   const un = e.target.closest("[data-fl-unhide]");
-  if (rm && !rm.classList.contains("sure")) {      // two taps, so a slip doesn't remove it
-    rm.classList.add("sure"); rm.textContent = "Tap again to remove";
-    setTimeout(() => { rm.classList.remove("sure"); rm.textContent = "Remove flight"; }, 3000);
+  const srm = e.target.closest("[data-st-remove]");
+  const sun = e.target.closest("[data-st-unhide]");
+  const rem = rm || srm;
+  if (rem && !rem.classList.contains("sure")) {     // two taps, so a slip doesn't remove it
+    const label = rem.textContent;
+    rem.classList.add("sure"); rem.textContent = "Tap again to remove";
+    setTimeout(() => { rem.classList.remove("sure"); rem.textContent = label; }, 3000);
     return;
   }
-  const btn = rm || un;
+  const btn = rm || un || srm || sun;
   if (!btn) return;
   if (location.hash.startsWith("#demo")) { closeSheet(); eggToast("Preview: nothing changed"); return; }
   btn.disabled = true;
   try {
-    await callFn("manage-flight", rm ? { hide: rm.dataset.flRemove } : { unhide: un.dataset.flUnhide });
+    const body = rm ? { hide: rm.dataset.flRemove } : un ? { unhide: un.dataset.flUnhide }
+      : srm ? { hideStay: srm.dataset.stRemove } : { unhideStay: sun.dataset.stUnhide };
+    await callFn("manage-flight", body);
     closeSheet();
-    eggToast(rm ? "Flight removed. No more alerts for it." : "Flight put back");
+    eggToast(rm ? "Flight removed. No more alerts for it." : srm ? "Stay removed" : "Put back");
     lastTimelineHtml = "";
     await loadFlights();
   } catch (err) {
@@ -781,7 +803,7 @@ function openDetail(target) {
   const f = fid && flights.find((x) => String(x.id) === fid);
   const s = sid && stays.find((x) => String(x.id) === sid);
   if (f) openSheet(flightSheet(f) + flightToolsHtml(f));
-  else if (s) openSheet(staySheet(s));
+  else if (s) openSheet(staySheet(s) + stayToolsHtml(s));
 }
 const timelineEl = document.getElementById("timeline");
 timelineEl.addEventListener("click", (e) => openDetail(e.target));
@@ -2231,7 +2253,9 @@ async function loadFlights() {
   flights = data.filter((f) => !f.hidden);
   const since = new Date(Date.now() - 86400000).toISOString();
   const stayRes = await supabase.from("stays").select("*").gt("check_out", since).order("check_in");
-  stays = stayRes.error ? [] : dropOverlaps(stayRes.data); // no stays table yet = no stays
+  const allStays = stayRes.error ? [] : stayRes.data;        // no stays table yet = no stays
+  hiddenStays = allStays.filter((s) => s.hidden);            // removed in the app
+  stays = dropOverlaps(allStays.filter((s) => !s.hidden));
   saveSnapshot();
   render();
   renderMap(pickHero(flights)); // the map only redraws when new data comes in

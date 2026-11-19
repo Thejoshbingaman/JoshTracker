@@ -1,6 +1,7 @@
 // manage-flight: Josh fixes his flights from the app, when the calendar is wrong.
 //   {"hide": 12}                                   remove a flight from the app (no more alerts). The calendar can't bring it back.
 //   {"unhide": 12}                                 put a removed flight back
+//   {"hideStay": 5} / {"unhideStay": 5}            the same for a hotel stay
 //   {"add": {"flightNumber": "WN1234", "date": "2026-11-20", "origin": "BWI"}, "replaces": 12}
 //                                                  add a flight by hand (looked up like a calendar flight).
 //                                                  "replaces" (optional) removes the old flight at the same time.
@@ -69,6 +70,12 @@ Deno.serve(async (req) => {
 
     let body: any = {};
     try { body = await req.json(); } catch { /* no body */ }
+
+    if (body.hideStay || body.unhideStay) {
+      const { error } = await admin.from("stays").update({ hidden: !!body.hideStay }).eq("id", body.hideStay || body.unhideStay);
+      if (error) return reply({ ok: false, error: error.message }, 400);
+      return reply({ ok: true });
+    }
 
     if (body.hide || body.unhide) {
       const { error } = await admin.from("flights").update({ hidden: !!body.hide }).eq("id", body.hide || body.unhide);
