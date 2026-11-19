@@ -288,7 +288,9 @@ function renderClock(hero) {
 
   const now = Date.now();
   const target = phase === "air" ? arrivalTime(hero) : departureTime(hero);
-  const text = formatDuration(new Date(target).getTime() - now);
+  const msLeft = new Date(target).getTime() - now;
+  if (phase === "air") maybeTouchdown(hero, msLeft);
+  const text = formatDuration(msLeft);
   // Seconds in a softer color
   const cut = text.lastIndexOf(":");
   document.getElementById("clock-time").innerHTML =
@@ -584,6 +586,124 @@ function f0dir(f) {
 }
 
 
+// ---------- FIX MY FLIGHTS (Josh only) ----------
+// For when the calendar is wrong: remove a flight, change it, or add one by hand.
+
+let hiddenFlights = [];
+const isJoshMe = () => myName.toLowerCase() === "josh";
+
+async function callFn(name, body) {
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch { /* keep the first message */ }
+    throw new Error(msg);
+  }
+  if (!data?.ok) throw new Error(data?.error || "That didn't work");
+  return data;
+}
+
+function flightToolsHtml(f) {
+  if (!isJoshMe()) return "";
+  return `
+    <div class="sheet-actions">
+      <button type="button" class="ghost small" data-fl-change="${f.id}">Change flight</button>
+      <button type="button" class="ghost small fl-remove" data-fl-remove="${f.id}">Remove flight</button>
+    </div>
+    <p class="sheet-note">Only you see these. Use them when your calendar is wrong.</p>`;
+}
+
+function renderFlightTools() {
+  const el = document.getElementById("flight-tools");
+  if (!el) return;
+  if (!isJoshMe() || isFamily) { el.classList.add("hidden"); return; }
+  el.innerHTML = `
+    <button type="button" class="link-button" data-fl-add>+ Add a flight</button>
+    ${hiddenFlights.length ? `<button type="button" class="link-button fl-hidden-link" data-fl-hidden>Removed flights (${hiddenFlights.length})</button>` : ""}`;
+  el.classList.remove("hidden");
+}
+
+function openFlightForm(replaces = null) {
+  const old = replaces && flights.find((x) => String(x.id) === String(replaces));
+  openSheet(`
+    <p class="sheet-kicker">${old ? `Change ${old.flightNumber}` : "Add a flight"}</p>
+    <h2 class="sheet-title">${old ? "Change flight" : "Add a flight"}</h2>
+    <form class="pc-form" id="fl-form" data-replaces="${old ? old.id : ""}">
+      <label class="field"><span>Flight number</span><input id="fl-num" type="text" placeholder="WN1234" autocapitalize="characters" autocomplete="off" required></label>
+      <label class="field"><span>Date it leaves</span><input id="fl-date" type="date" required value="${old ? escapeHtml(old.date) : ""}"></label>
+      <label class="field"><span>From airport (if it has more than one stop)</span><input id="fl-from" type="text" maxlength="3" placeholder="BWI" autocapitalize="characters" autocomplete="off" value="${old ? escapeHtml(old.origin) : ""}"></label>
+      <button type="submit" class="fl-submit">${old ? "Save change" : "Add flight"}</button>
+      <p class="error" id="fl-error"></p>
+      ${old ? `<p class="sheet-note">${old.flightNumber} (${old.origin} → ${old.destination}) is removed when the new flight is saved. Alerts follow the new one.</p>` : `<p class="sheet-note">It's looked up like a calendar flight: times, map, and alerts. The calendar sync never removes it.</p>`}
+    </form>`);
+}
+
+function openHiddenFlights() {
+  openSheet(`
+    <p class="sheet-kicker">Only you see these</p>
+    <h2 class="sheet-title">Removed flights</h2>
+    <div class="sheet-rows">
+      ${hiddenFlights.map((f) => `
+        <div class="sheet-row fl-hidden-row">
+          <span>${f.flightNumber} · ${f.origin} → ${f.destination}<br><small>${formatAt(departureTime(f))}</small></span>
+          <button type="button" class="ghost small" data-fl-unhide="${f.id}">Put back</button>
+        </div>`).join("") || `<p class="sheet-note">None.</p>`}
+    </div>`);
+}
+
+document.addEventListener("click", async (e) => {
+  if (e.target.closest("[data-fl-add]")) return openFlightForm();
+  if (e.target.closest("[data-fl-hidden]")) return openHiddenFlights();
+  const ch = e.target.closest("[data-fl-change]");
+  if (ch) return openFlightForm(ch.dataset.flChange);
+  const rm = e.target.closest("[data-fl-remove]");
+  const un = e.target.closest("[data-fl-unhide]");
+  if (rm && !rm.classList.contains("sure")) {      // two taps, so a slip doesn't remove it
+    rm.classList.add("sure"); rm.textContent = "Tap again to remove";
+    setTimeout(() => { rm.classList.remove("sure"); rm.textContent = "Remove flight"; }, 3000);
+    return;
+  }
+  const btn = rm || un;
+  if (!btn) return;
+  if (location.hash.startsWith("#demo")) { closeSheet(); eggToast("Preview: nothing changed"); return; }
+  btn.disabled = true;
+  try {
+    await callFn("manage-flight", rm ? { hide: rm.dataset.flRemove } : { unhide: un.dataset.flUnhide });
+    closeSheet();
+    eggToast(rm ? "Flight removed. No more alerts for it." : "Flight put back");
+    lastTimelineHtml = "";
+    await loadFlights();
+  } catch (err) {
+    btn.disabled = false;
+    eggToast(err.message);
+  }
+});
+
+document.addEventListener("submit", async (e) => {
+  if (e.target.id !== "fl-form") return;
+  e.preventDefault();
+  const err = document.getElementById("fl-error");
+  const btn = e.target.querySelector(".fl-submit");
+  const label = btn.textContent;
+  const add = {
+    flightNumber: document.getElementById("fl-num").value,
+    date: document.getElementById("fl-date").value,
+    origin: document.getElementById("fl-from").value,
+  };
+  if (location.hash.startsWith("#demo")) { closeSheet(); eggToast("Preview: nothing changed"); return; }
+  btn.disabled = true; btn.textContent = "Looking it up…"; err.textContent = "";
+  try {
+    const res = await callFn("manage-flight", { add, replaces: e.target.dataset.replaces || undefined });
+    closeSheet();
+    eggToast(`Saved: ${res.route}`);
+    lastTimelineHtml = "";
+    await loadFlights();
+  } catch (ex) {
+    err.textContent = ex.message;
+    btn.disabled = false; btn.textContent = label;
+  }
+});
+
 // ---------- DETAIL SHEET ----------
 // Tap a flight or hotel in "This week" to see more.
 
@@ -660,7 +780,7 @@ function openDetail(target) {
   const sid = target.closest("[data-stay]")?.dataset.stay;
   const f = fid && flights.find((x) => String(x.id) === fid);
   const s = sid && stays.find((x) => String(x.id) === sid);
-  if (f) openSheet(flightSheet(f));
+  if (f) openSheet(flightSheet(f) + flightToolsHtml(f));
   else if (s) openSheet(staySheet(s));
 }
 const timelineEl = document.getElementById("timeline");
@@ -767,6 +887,7 @@ function renderMap(hero) {
     }).catch(() => { /* no borders if the file can't load */ });
     mapLayers = L.layerGroup().addTo(map);
     hookPaTaps();
+    hookSpaceEgg();
   }
   mapHero = hero;
   if (statesLayer) statesLayer.setStyle(stateStyle);
@@ -1384,14 +1505,150 @@ document.addEventListener("click", (e) => {
   const ph = e.target.closest(".pc-photo[data-pc-id]");
   if (!ph) return;
   const now = Date.now();
-  if (lastPhotoTap.el === ph && now - lastPhotoTap.t < 350) {
+  clearTimeout(lastPhotoTap.timer);
+  if (lastPhotoTap.el === ph && now - lastPhotoTap.t < 350) {   // double-tap: like
     lastPhotoTap = { el: null, t: 0 };
     likeBurst(ph);
     toggleLike(ph.dataset.pcId, true);
-  } else {
-    lastPhotoTap = { el: ph, t: now };
+  } else {                                                      // one tap: open it big (after a short wait for a 2nd tap)
+    lastPhotoTap = { el: ph, t: now, timer: setTimeout(() => openViewer(ph.dataset.pcId), 330) };
   }
 });
+
+// ---------- PHOTO VIEWER ----------
+// Tap a postcard photo: it opens full screen. Pinch or double-tap to zoom, drag to look around,
+// tap once to hide or show the info at the bottom, swipe down (or ×) to close.
+
+function openViewer(id) {
+  const p = postcards.find((x) => String(x.id) === String(id));
+  if (!p?.photo_path) return;
+  const from = (p.sender_name || "").toLowerCase() === "josh" ? "Josh" : "Arc";
+  const date = new Date(p.created_at).toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric", timeZone: TIME_ZONE });
+  const el = document.createElement("div");
+  el.className = "viewer";
+  el.innerHTML = `
+    <div class="vw-stage"><img class="vw-img" alt=""></div>
+    <button type="button" class="vw-close" aria-label="Close"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
+    <div class="vw-info">
+      <p class="vw-from">Postcard from <strong>${escapeHtml(p.city || "somewhere")}</strong></p>
+      <p class="vw-msg">${escapeHtml(p.message).replace(/\n/g, "<br>")}</p>
+      <div class="vw-meta">
+        <span>— ${from} · ${date}</span>
+        <span class="vw-acts">
+          ${p.postcard_likes ? `<button type="button" class="pc-like vw-like${iLiked(p) ? " on" : ""}" data-pc-like="${p.id}" aria-label="Like">${LIKE_ICON}<span>${likeCount(p) || ""}</span></button>` : ""}
+          <button type="button" class="pc-act vw-save" data-pc-save="photo" data-pc-id="${p.id}">Save photo</button>
+        </span>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  document.body.classList.add("sheet-open");
+  const stage = el.querySelector(".vw-stage");
+  const img = el.querySelector(".vw-img");
+  let fullUrl = null, closed = false;
+
+  // The small copy shows at once; the full-quality original replaces it when it arrives
+  postcardPhoto(p.photo_path).then((u) => { if (u && !img.src) img.src = u; });
+  if (p.original_path) {
+    postcardBlob(p.original_path).then((b) => {
+      if (closed) return;
+      fullUrl = URL.createObjectURL(b);
+      const test = new Image();
+      test.onload = () => { if (!closed) img.src = fullUrl; };
+      test.src = fullUrl;                       // a type the phone can't show (HEIC on Android) is skipped
+    }).catch(() => {});
+  }
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    el.classList.add("closing");
+    if (sheet.classList.contains("hidden")) document.body.classList.remove("sheet-open");   // keep a sheet under it locked
+    setTimeout(() => { el.remove(); if (fullUrl) URL.revokeObjectURL(fullUrl); }, 200);
+  };
+  el.querySelector(".vw-close").addEventListener("click", close);
+
+  // ----- zoom and pan -----
+  let s = 1, tx = 0, ty = 0;
+  const pts = new Map();
+  let g = null;               // the gesture so far
+  let lastTap = 0, tapTimer = null;
+  const center = () => { const r = stage.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+  const apply = (anim) => {
+    img.style.transition = anim ? "transform 0.25s ease" : "none";
+    img.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+  };
+  const clamp = () => {
+    if (s <= 1) { s = 1; tx = 0; ty = 0; return; }
+    const w = img.clientWidth * s, h = img.clientHeight * s;
+    const mx = Math.max(0, (w - stage.clientWidth) / 2), my = Math.max(0, (h - stage.clientHeight) / 2);
+    tx = Math.min(mx, Math.max(-mx, tx));
+    ty = Math.min(my, Math.max(-my, ty));
+  };
+  const zoomAt = (px, py, ns) => {          // keep the point under the finger still
+    const c = center();
+    const qx = (px - c.x - tx) / s, qy = (py - c.y - ty) / s;
+    s = Math.min(5, Math.max(1, ns));
+    tx = px - c.x - qx * s; ty = py - c.y - qy * s;
+  };
+  const twoPoint = () => {
+    const [a, b] = [...pts.values()];
+    return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+  stage.addEventListener("pointerdown", (e) => {
+    stage.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    g = { s, tx, ty, x: e.clientX, y: e.clientY, t: Date.now(), moved: false, two: pts.size === 2 ? twoPoint() : null, multi: pts.size > 1 || g?.multi };
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId) || !g) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2 && g.two) {
+      const now = twoPoint();
+      s = g.s; tx = g.tx; ty = g.ty;
+      zoomAt(g.two.x, g.two.y, g.s * now.d / g.two.d);
+      tx += now.x - g.two.x; ty += now.y - g.two.y;
+      g.moved = true;
+      apply(false);
+      return;
+    }
+    const dx = e.clientX - g.x, dy = e.clientY - g.y;
+    if (Math.hypot(dx, dy) > 8) g.moved = true;
+    if (!g.moved) return;
+    if (g.s > 1) { tx = g.tx + dx; ty = g.ty + dy; clamp(); apply(false); }
+    else if (!g.multi) {                      // not zoomed: drag down to close
+      ty = Math.max(0, dy);
+      el.style.setProperty("--fade", String(Math.max(0.3, 1 - ty / 400)));
+      apply(false);
+    }
+  });
+  const end = (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.delete(e.pointerId);
+    if (!g) return;
+    if (pts.size > 0) { g = { s, tx, ty, x: [...pts.values()][0].x, y: [...pts.values()][0].y, t: Date.now(), moved: true, two: null, multi: true }; return; }
+    const wasTap = !g.moved && Date.now() - g.t < 300 && !g.multi;
+    if (!g.moved || g.s > 1 || g.multi) {
+      if (s < 1.05) { s = 1; } clamp(); apply(true);
+    } else if (ty > 120) { close(); g = null; return; }
+    else { ty = 0; el.style.setProperty("--fade", "1"); apply(true); }
+    if (wasTap) {
+      const now = Date.now();
+      if (now - lastTap < 300) {              // double-tap: zoom in, or back out
+        clearTimeout(tapTimer); lastTap = 0;
+        if (s > 1) { s = 1; tx = 0; ty = 0; } else zoomAt(e.clientX, e.clientY, 2.5);
+        clamp(); apply(true);
+      } else {
+        lastTap = now;
+        tapTimer = setTimeout(() => el.classList.toggle("bare"), 300);   // one tap: hide or show the info
+      }
+    }
+    g = null;
+  };
+  stage.addEventListener("pointerup", end);
+  stage.addEventListener("pointercancel", end);
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+}
 
 let commentsFor = null;      // which postcard's comments are open
 function openComments(id) {
@@ -1658,6 +1915,7 @@ document.addEventListener("click", async (e) => {
     const result = await saveImage(ready.blob, ready.name);
     if (result === "retry") { b.textContent = "Ready · tap to save"; return; }
     if (result === "downloaded") eggToast("Saved. Find it in Photos, in Download.");
+    if (result === "done" || result === "downloaded") noteSavedPostcard(p);
     b.textContent = label;
   } catch (err) {
     preparedSaves.delete(key);
@@ -1969,7 +2227,8 @@ async function loadFlights() {
     document.getElementById("hero").innerHTML = `<p class="error">${error.message}</p>`;
     return;
   }
-  flights = data;
+  hiddenFlights = data.filter((f) => f.hidden);   // removed in the app (only Josh sees them, in a list)
+  flights = data.filter((f) => !f.hidden);
   const since = new Date(Date.now() - 86400000).toISOString();
   const stayRes = await supabase.from("stays").select("*").gt("check_out", since).order("check_in");
   stays = stayRes.error ? [] : dropOverlaps(stayRes.data); // no stays table yet = no stays
@@ -1978,6 +2237,7 @@ async function loadFlights() {
   renderMap(pickHero(flights)); // the map only redraws when new data comes in
   maybeCelebrate(false);
   maybeAlmostThere();
+  renderFlightTools();
 }
 
 // ---------- COUPON WALLET ----------
@@ -2348,6 +2608,9 @@ pingButtons.forEach((button) => {
   button.addEventListener("click", async () => {
     if (button.disabled) return;
     const type = button.dataset.type;
+    // What the big countdown showed at the moment of the tap (for the Bullseye egg)
+    const clockBox = document.getElementById("clock");
+    const clockAtTap = clockBox.classList.contains("hidden") ? "" : document.getElementById("clock-time").textContent.trim();
     button.disabled = true;
     PING_EFFECT[type](button);
     pingStatus.textContent = "Sending...";
@@ -2368,6 +2631,7 @@ pingButtons.forEach((button) => {
       if (data.storm) setTimeout(showKissStorm, 300); // her 10th kiss today
       if (data.sync) setTimeout(showSync, 300);       // she and Josh sent within a minute
       if (data.streak) setTimeout(showStreak, 900);   // 7 days in a row
+      checkTimeEggs(type, clockAtTap);                // 11:11, midnight, bullseye, our minute
     }
 
     // Short cooldown so a button can't be spammed by accident
@@ -2396,7 +2660,7 @@ pingButtons.forEach((button) => {
 // Plus birthday mode on her birthday (set in the secrets table).
 
 // 12 eggs, plus the retired shake punch if she found it before it was removed (it still counts)
-const EGG_BASE = 12;
+const EGG_BASE = 23;
 const eggTotal = () => EGG_BASE + (eggsFound.has("shake") ? 1 : 0);
 let eggsFound = new Set();
 let eggDates = {};          // egg -> when it was found
@@ -2819,6 +3083,236 @@ function maybeAlmostThere(force = false) {
   el.querySelector(".almost-close").addEventListener("click", () => el.remove());
 }
 
+// A simple full-screen pop-up for the eggs below. Tap to close.
+function eggPop(cls, inner, ms = 4500) {
+  const el = document.createElement("div");
+  el.className = `egg-pop ${cls}`;
+  el.innerHTML = `<div class="egg-pop-inner">${inner}</div>`;
+  document.body.appendChild(el);
+  el.addEventListener("click", () => el.remove());
+  setTimeout(() => el.remove(), ms);
+  return el;
+}
+const etClock = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: TIME_ZONE, hourCycle: "h23", hour: "2-digit", minute: "2-digit" })
+    .formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { h: Number(p.hour), m: Number(p.minute) };
+};
+
+// 15. Scrapbook: she saves 5 different postcards from Josh (counted on her phone)
+function noteSavedPostcard(p) {
+  if (isJoshMe() || (p.sender_name || "").toLowerCase() !== "josh") return;
+  let ids = [];
+  try { ids = JSON.parse(localStorage.getItem("jt-saved-postcards") || "[]"); } catch { /* storage off */ }
+  if (!ids.includes(p.id)) ids.push(p.id);
+  try { localStorage.setItem("jt-saved-postcards", JSON.stringify(ids)); } catch { /* storage off */ }
+  if (ids.length >= 5 && !eggsFound.has("scrapbook")) setTimeout(showScrapbook, 800);
+}
+function showScrapbook() {
+  const cards = Array.from({ length: 5 }, (_, i) =>
+    `<span class="sb-card" style="--r:${(i - 2) * 9}deg;--d:${i * 0.12}s">${SCORE_ICON.kiss}</span>`).join("");
+  eggPop("scrapbook", `
+    <div class="sb-stack">${cards}</div>
+    <span class="egg-pop-word">Scrapbook</span>
+    <span class="egg-pop-sub">5 postcards saved. You're keeping all of them, aren't you?</span>`);
+  eggFound("scrapbook");
+}
+
+// 16. Make a wish: send anything at 11:11 (AM or PM, Eastern)
+function showWish() {
+  eggPop("wish", `
+    <span class="wish-star"></span>
+    <span class="egg-pop-word">11:11</span>
+    <span class="egg-pop-sub">Make a wish. (Mine already came true.)</span>`, 5000);
+  eggFound("wish");
+}
+
+// 17. The early shift: send a kiss in the first minute after midnight (Eastern)
+function showMidnight() {
+  eggPop("midnight", `
+    <span class="mid-heart">${SCORE_ICON.kiss}</span>
+    <span class="egg-pop-word">The early shift</span>
+    <span class="egg-pop-sub">Clocked in at midnight. The first kiss of the day is mine.</span>`, 5000);
+  eggFound("midnight");
+}
+function checkTimeEggs(type, clockAtTap = "") {
+  if (isJoshMe() || isFamily) return;
+  const { h, m } = etClock();
+  if (m === 11 && (h === 11 || h === 23)) setTimeout(showWish, 400);
+  if (type === "kiss" && h === 0 && m === 0) setTimeout(showMidnight, 400);
+  if (/(^|\s)\d{2}:00:00$/.test(clockAtTap) && !/^00:00:00$/.test(clockAtTap)) setTimeout(showBullseye, 600);
+  checkOurMinute(h, m);
+  if (dayKeyET(Date.now()).slice(5) === "03-14" && (h === 3 || h === 15) && m === 14) setTimeout(showPi, 500);
+}
+// 23. Stamp collector: press and hold the stamp on a postcard. It peels back to a hidden note.
+let stampTimer = null, stampStart = null;
+document.addEventListener("pointerdown", (e) => {
+  const st = e.target.closest(".pc-stamp");
+  if (!st || isFamily) return;
+  stampStart = { x: e.clientX, y: e.clientY };
+  st.classList.add("pressing");
+  stampTimer = setTimeout(() => { st.classList.remove("pressing"); st.classList.add("peel"); setTimeout(() => st.classList.remove("peel"), 1200); showStampNote(); }, 900);
+});
+const stopStamp = () => {
+  clearTimeout(stampTimer); stampStart = null;
+  document.querySelectorAll(".pc-stamp.pressing").forEach((s) => s.classList.remove("pressing"));
+};
+document.addEventListener("pointerup", stopStamp);
+document.addEventListener("pointercancel", stopStamp);
+document.addEventListener("pointermove", (e) => {      // moving the finger (scrolling) cancels the hold
+  if (stampStart && Math.hypot(e.clientX - stampStart.x, e.clientY - stampStart.y) > 10) stopStamp();
+});
+document.addEventListener("contextmenu", (e) => { if (e.target.closest(".pc-stamp")) e.preventDefault(); });
+async function showStampNote() {
+  const sec = await loadSecrets();
+  const note = sec.stamp_note || "You found the note under the stamp. Josh hasn't written it yet ;)";
+  setTimeout(() => {
+    eggPop("stamp", `
+      <span class="st-big">${SCORE_ICON.kiss}</span>
+      <span class="egg-pop-word">Stamp collector</span>
+      <div class="m-card st-note"><p class="m-note">${escapeHtml(note).replace(/\n/g, "<br>")}</p><p class="m-sign">Josh</p></div>`, 15000);
+    eggFound("stamp");
+  }, 500);
+}
+
+// 24. Pi day: send something at 3:14 on March 14 (Eastern)
+function showPi() {
+  eggPop("pi", `
+    <span class="pi-sign">π</span>
+    <span class="egg-pop-word">3.14</span>
+    <span class="egg-pop-sub">My love for you goes on forever. Like pi, but less irrational.</span>`, 6000);
+  eggFound("pi");
+}
+
+// 25. Touchdown: the app is open the second the countdown hits 00:00:00 while Josh is landing
+function maybeTouchdown(hero, msLeft) {
+  if (isFamily || isJoshMe() || document.hidden || msLeft > 0 || msLeft < -5000) return;
+  const key = `jt-touchdown-${hero.flightNumber}-${hero.date}`;
+  try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; }
+  eggPop("touchdown", `
+    <span class="td-plane">${PLANE_SVG}</span>
+    <span class="egg-pop-word">Touchdown</span>
+    <span class="egg-pop-sub">You watched the clock all the way down to zero. I'm on the ground.</span>`, 6000);
+  eggFound("touchdown");
+}
+
+// 19. Full moon: open the app at night (7 PM to 5 AM Eastern) on a full-moon night
+function moonAge(t = Date.now()) {          // days since the last new moon (0 to 29.5)
+  const SYNODIC = 29.530588853, NEW_MOON = Date.UTC(2000, 0, 6, 18, 14);
+  return ((((t - NEW_MOON) / 86400000) % SYNODIC) + SYNODIC) % SYNODIC;
+}
+function maybeFullMoon(force = false) {
+  if (isFamily) return;
+  const { h } = etClock();
+  const full = Math.abs(moonAge() - 14.77) < 1;
+  if (!force && (!full || (h >= 5 && h < 19))) return;
+  const night = dayKeyET(Date.now() - 6 * 3600000);        // after midnight still counts as the same night
+  let shown = null;
+  try { shown = localStorage.getItem("jt-fullmoon"); } catch { /* storage off */ }
+  if (!force && shown === night) return;
+  try { localStorage.setItem("jt-fullmoon", night); } catch { /* storage off */ }
+  const stars = Array.from({ length: 40 }, (_, i) =>
+    `<span class="owl-star" style="left:${(i * 41) % 100}%;top:${(i * 23) % 75}%;animation-delay:${(i % 8) * 0.35}s"></span>`).join("");
+  const el = eggPop("fullmoon", `
+    <span class="fm-moon"></span>
+    <span class="egg-pop-word">Full moon</span>
+    <span class="egg-pop-sub">Wherever I am tonight, I'm looking at the same moon you are.</span>`, 7000);
+  el.insertAdjacentHTML("afterbegin", stars);
+  eggFound("moon");
+}
+
+// 20. Rewind: at the very bottom of the page, pull up hard 3 times. Shows her very first send.
+let rewindPulls = [], pullStart = null;
+const atPageBottom = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+function countRewindPull() {
+  if (document.body.classList.contains("sheet-open") || isFamily) return;
+  const now = Date.now();
+  rewindPulls = rewindPulls.filter((t) => now - t < 6000);
+  rewindPulls.push(now);
+  if (rewindPulls.length >= 3) { rewindPulls = []; showRewind(); }
+}
+window.addEventListener("touchstart", (e) => {
+  pullStart = atPageBottom() ? e.touches[0].clientY : null;
+}, { passive: true });
+window.addEventListener("touchend", (e) => {
+  if (pullStart == null) return;
+  const dy = e.changedTouches[0].clientY - pullStart;
+  pullStart = null;
+  if (dy < -90 && atPageBottom()) countRewindPull();
+}, { passive: true });
+let lastWheelPull = 0;
+window.addEventListener("wheel", (e) => {                  // on a computer: scroll down hard at the bottom
+  if (e.deltaY < 40 || !atPageBottom() || Date.now() - lastWheelPull < 600) return;
+  lastWheelPull = Date.now();
+  countRewindPull();
+}, { passive: true });
+async function showRewind() {
+  const { data } = await supabase.from("pings").select("type, created_at")
+    .not("sender_name", "ilike", "josh").order("created_at", { ascending: true }).limit(1);
+  const { count } = await supabase.from("pings").select("id", { count: "exact", head: true })
+    .not("sender_name", "ilike", "josh");
+  const first = data?.[0];
+  const her = isJoshMe() ? `${otherName()}'s` : "Your";
+  const word = { kiss: "kiss", hug: "hug", punch: "punch" }[first?.type] || "one";
+  const when = first ? new Date(first.created_at) : null;
+  eggPop("rewind", `
+    <span class="rw-icon">${SCORE_ICON[first?.type] || SCORE_ICON.kiss}</span>
+    <span class="egg-pop-word">Rewind</span>
+    <span class="egg-pop-sub">${first
+      ? `${her} very first ${word}: ${when.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: TIME_ZONE })} at ${formatAt(first.created_at, null, false)}.${(count || 1) > 1 ? `<br><br>${((count || 1) - 1).toLocaleString()} more since. Look how far we've come.` : ""}`
+      : "The very first one hasn't happened yet."}</span>`, 9000);
+  eggFound("rewind");
+}
+
+// 21. Bullseye: send something the moment the big countdown reads a round hour (like 1:00:00)
+function showBullseye() {
+  eggPop("bullseye", `
+    <span class="be-target"><span></span></span>
+    <span class="egg-pop-word">Bullseye</span>
+    <span class="egg-pop-sub">Right on the hour. Not a second early, not a second late.</span>`, 5000);
+  eggFound("bullseye");
+}
+
+// 22. Our minute: send something when the clock matches the anniversary date (saved in the secrets table)
+async function checkOurMinute(h, m) {
+  const sec = await loadSecrets();
+  const [mo, day] = String(sec.anniversary || "").split("-").map(Number);   // "09-04"
+  if (!mo || !day || m !== day || (h % 12 || 12) !== (mo % 12 || 12)) return;
+  const label = `${mo}:${String(day).padStart(2, "0")}`;
+  const date = new Date(Date.UTC(2000, mo - 1, day)).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+  setTimeout(() => {
+    eggPop("ourminute", `
+      <span class="om-clock">${label}</span>
+      <span class="egg-pop-word">Our minute</span>
+      <span class="egg-pop-sub">${date}. Twice a day, the clock remembers too.</span>`, 7000);
+    eggFound("ourminute");
+  }, 500);
+}
+
+
+// 18. Seen from space: pinch the map all the way out
+function hookSpaceEgg() {
+  if (!map || hookSpaceEgg.done) return;
+  hookSpaceEgg.done = true;
+  map.on("zoomend", () => {
+    if (map.getZoom() > 2 || isFamily) return;
+    if (showSpace.shown) return;
+    showSpace.shown = true;
+    setTimeout(() => { showSpace.shown = false; }, 10000);
+    showSpace();
+  });
+}
+function showSpace() {
+  const stars = Array.from({ length: 50 }, (_, i) =>
+    `<span class="owl-star" style="left:${(i * 37) % 100}%;top:${(i * 53) % 100}%;animation-delay:${(i % 9) * 0.3}s"></span>`).join("");
+  const el = eggPop("space", `
+    <span class="space-earth"></span>
+    <span class="egg-pop-word">Seen from space</span>
+    <span class="egg-pop-sub">Even from up here, I can find you.</span>`, 5500);
+  el.insertAdjacentHTML("afterbegin", stars);
+  eggFound("space");
+}
+
 // The list of eggs: tap the counter line to open it
 const EGG_LIST = [
   { key: "note",  name: "Secret note",  how: "Tap the headline 7 times.",          does: "Opens a hidden note from Josh.",       hint: "The headline has more to say. Be persistent." },
@@ -2833,6 +3327,17 @@ const EGG_LIST = [
   { key: "home",  name: "Home state",   how: "Tap Pennsylvania on the map 5 times.", does: "Hearts rise from Josh's home.",      hint: "There's no place like home. The map knows where it is." },
   { key: "streak", name: "The streak",  how: "Send something 7 days in a row.",    does: "A whole week without missing a day.", hint: "Don't skip a day. Not even one." },
   { key: "photo", name: "Photo tap",    how: "Tap Josh's photo 10 times.",         does: "A photo Josh didn't want you to see.", hint: "Josh's face is very tappable." },
+  { key: "scrapbook", name: "Scrapbook", how: "Save 5 of Josh's postcards.",       does: "Proof you keep every one.",            hint: "Some things are worth keeping. Five of them." },
+  { key: "wish",  name: "Make a wish",  how: "Send something at 11:11.",           does: "A wish, and Josh's answer.",           hint: "Look at the clock. Then look again." },
+  { key: "midnight", name: "The early shift", how: "Send a kiss right at midnight.", does: "The first kiss of the day.",          hint: "Clock in before anyone else." },
+  { key: "moon",  name: "Full moon",    how: "Open the app at night when the moon is full.", does: "The same moon over both of you.", hint: "Look up. Only on certain nights." },
+  { key: "rewind", name: "Rewind",      how: "At the very bottom, pull up hard 3 times.", does: "Your very first one, and how many since.", hint: "The end is only the beginning. Pull harder." },
+  { key: "bullseye", name: "Bullseye",  how: "Send one when the countdown hits a round hour.", does: "Right on the hour.",          hint: "Perfectly round. Not a second off." },
+  { key: "stamp", name: "Stamp collector", how: "Press and hold the stamp on a postcard.", does: "A note hidden under the stamp.", hint: "Every postcard has something stuck to it." },
+  { key: "pi",    name: "Pi day",       how: "Send something at 3:14 on March 14.",   does: "Love that goes on forever.",         hint: "Some numbers never end. Neither does this. Once a year." },
+  { key: "touchdown", name: "Touchdown", how: "Be watching when the countdown hits zero as Josh lands.", does: "You watched him land.", hint: "Watch until the very last second." },
+  { key: "ourminute", name: "Our minute", how: "Send one when the clock matches our day.", does: "Twice a day, the clock remembers.", hint: "Some minutes mean more than others." },
+  { key: "space", name: "Seen from space", how: "Pinch the map all the way out.",  does: "Even from space, he can find you.",    hint: "Step back. Way, way back." },
   // Retired: only listed (and counted) if she found it before it was removed
   { key: "shake", name: "Shake punch",  how: "Shook the phone to punch Josh.",     does: "Retired, but it still counts.",        hint: "", retired: true },
 ];
@@ -2886,6 +3391,17 @@ document.getElementById("sheet-body").addEventListener("click", (e) => {
   else if (key === "home") paFromList();
   else if (key === "streak") showStreak();
   else if (key === "photo") showSillyPhoto();
+  else if (key === "scrapbook") showScrapbook();
+  else if (key === "wish") showWish();
+  else if (key === "midnight") showMidnight();
+  else if (key === "space") showSpace();
+  else if (key === "stamp") showStampNote();
+  else if (key === "pi") showPi();
+  else if (key === "touchdown") eggPop("touchdown", `<span class="td-plane">${PLANE_SVG}</span><span class="egg-pop-word">Touchdown</span><span class="egg-pop-sub">You watched the clock all the way down to zero. I'm on the ground.</span>`, 6000);
+  else if (key === "moon") maybeFullMoon(true);
+  else if (key === "rewind") showRewind();
+  else if (key === "bullseye") showBullseye();
+  else if (key === "ourminute") { loadSecrets().then((sec) => { const [mo, d] = String(sec.anniversary || "").split("-").map(Number); if (mo) checkOurMinute(mo % 12 || 12, d); }); }
   else if (key === "shake") eggToast("This one's retired, but it still counts");
   else if (key === "roll") {
     const plane = document.querySelector(".map-plane");
@@ -3015,7 +3531,7 @@ async function maybeShowWelcome() {
 // ---------- WHAT'S NEW (Arc) / WELCOME (Mom) ----------
 // Shows once per phone. Change APP_VERSION to show a new "What's new" after a future update.
 
-const APP_VERSION = "3.3";
+const APP_VERSION = "3.4";
 const INTRO_ICON = {
   heart: `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 20C7 16 4 13 4 9.5 4 7 6 5 8.3 5c1.6 0 3 1 3.7 2.4"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="0.1 3.2" d="M12 7.4C12.7 6 14.1 5 15.7 5 18 5 20 7 20 9.5c0 3.5-3 6.5-8 10.5"/></svg>`,
   bed: ICON.bed, cal: ICON.calendar, clock: ICON.clock, pin: ICON.pin, home: ICON.home,
@@ -3059,9 +3575,9 @@ function showIntro(kind) {
       <p class="kicker">JoshTracker ${APP_VERSION}</p>
       <h2>What's new</h2>
       <ul class="tour">
-        ${introItem(INTRO_ICON.heart, "Like and comment", "Tap the heart on a postcard, or double-tap its photo. Tap Comment to write back.")}
-        ${introItem(INTRO_ICON.cal, "Dates in the week", "Our next date now shows on its day in the week list.")}
-        ${introItem(INTRO_ICON.mail, "Full-quality photos", "Save photo now saves the full-size original, not a smaller copy.")}
+        ${introItem(INTRO_ICON.mail, "Big photos", "Tap a postcard photo to see it full screen. Pinch or double-tap to zoom. Swipe down to close.")}
+        ${introItem(INTRO_ICON.bolt, "Faster alerts", "Kisses, hugs, punches, and flight alerts now come through right away, even when a phone is asleep.")}
+        ${introItem(INTRO_ICON.egg, "More easter eggs", "4 more are hidden. These ones are harder.")}
       </ul>`;
   introEl.innerHTML = `
     <div class="welcome-inner">
@@ -3119,6 +3635,11 @@ async function showCorrectView() {
       if (location.hash === "#demo-ko") showKO();
       if (location.hash === "#demo-storm") showKissStorm();
       if (location.hash === "#demo-early") maybeEarlyBird(true); else maybeEarlyBird();
+      if (location.hash === "#demo-moon") maybeFullMoon(true); else maybeFullMoon();
+      if (location.hash === "#demo-rewind") showRewind();
+      if (location.hash === "#demo-bullseye") showBullseye();
+      if (location.hash === "#demo-stamp") showStampNote();
+      if (location.hash === "#demo-pi") showPi();
       if (location.hash === "#demo-sync") showSync();
       if (location.hash === "#demo-streak") showStreak();
       if (location.hash === "#demo-photo") showSillyPhoto();

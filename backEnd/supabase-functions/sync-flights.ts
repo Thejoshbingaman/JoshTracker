@@ -16,6 +16,9 @@ webpush.setVapidDetails(
   Deno.env.get("VAPID_PRIVATE_KEY")!
 );
 
+// High urgency: phones deliver at once, even when asleep or saving battery. Kept for 12 hours if the phone is offline.
+const PUSH_OPTIONS = { urgency: "high" as const, TTL: 12 * 3600 };
+
 // Send a "something went wrong" alert to Josh's phones only
 async function alertJosh(message: string) {
   const adminId = Deno.env.get("ADMIN_USER_ID");
@@ -25,7 +28,8 @@ async function alertJosh(message: string) {
     try {
       await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify({ title: "JoshTracker problem", body: message.slice(0, 200), tag: "admin" })
+        JSON.stringify({ title: "JoshTracker problem", body: message.slice(0, 200), tag: "admin" }),
+        PUSH_OPTIONS
       );
     } catch { /* ignore */ }
   }
@@ -299,6 +303,26 @@ Deno.serve(async (req) => {
         results.push(`${flight.flightNumber}: saved (up to date, no API call)`);
       } else {
         results.push(await lookupAndSave(flight));
+      }
+    }
+
+    // A flight that is no longer in the calendar (changed or canceled) is removed.
+    // Only flights the calendar would have shown: before the last event it returned (it returns 50 at most).
+    // Flights added by hand in the app are never removed here.
+    if (events.length > 0) {
+      const lastStart = events[events.length - 1].start?.dateTime || events[events.length - 1].start?.date;
+      const { data: future } = await supabase.from("flights").select("id, flightNumber, date, departureUtc, manual")
+        .gt("departureUtc", new Date(Date.now() + 30 * 60000).toISOString());
+      for (const r of future || []) {
+        if (r.manual) continue;
+        if (lastStart && new Date(r.departureUtc).getTime() > new Date(lastStart).getTime() + 86400000) continue;
+        const inCalendar = flights.some((f: any) =>
+          f.flightNumber === r.flightNumber &&
+          Math.abs(new Date(r.date).getTime() - new Date(f.date).getTime()) <= 86400000);
+        if (!inCalendar) {
+          await supabase.from("flights").delete().eq("id", r.id);
+          results.push(`${r.flightNumber}: saved (removed: no longer in the calendar)`);
+        }
       }
     }
 

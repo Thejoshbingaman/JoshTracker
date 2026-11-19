@@ -21,6 +21,9 @@ webpush.setVapidDetails(
   Deno.env.get("VAPID_PRIVATE_KEY")!
 );
 
+// High urgency: phones deliver at once, even when asleep or saving battery. Kept for 12 hours if the phone is offline.
+const PUSH_OPTIONS = { urgency: "high" as const, TTL: 12 * 3600 };
+
 const TZ = "America/New_York";
 const HOME_AIRPORTS = ["BWI", "MDT", "PHL"];
 const CITY: Record<string, string> = {
@@ -43,7 +46,7 @@ const isSundayET = () => dow(Date.now()) === "Sun";
 
 // ---------- build the message ----------
 async function buildPreview() {
-  const { data: flights } = await supabase.from("flights").select("*").order("departureUtc");
+  const { data: flights } = await supabase.from("flights").select("*").not("hidden", "is", true).order("departureUtc");
   const { data: stays } = await supabase.from("stays").select("*").order("check_in");
 
   // The 7 days from tomorrow (Monday) through next Sunday, at midday to dodge DST edges
@@ -110,7 +113,8 @@ async function send(payload: any, onlyJosh: boolean) {
     try {
       await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify(payload)
+        JSON.stringify(payload),
+        PUSH_OPTIONS
       );
       sent++;
     } catch (err: any) {

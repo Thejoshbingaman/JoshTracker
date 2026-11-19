@@ -17,6 +17,9 @@ webpush.setVapidDetails(
   Deno.env.get("VAPID_PRIVATE_KEY")!
 );
 
+// High urgency: phones deliver at once, even when asleep or saving battery. Kept for 12 hours if the phone is offline.
+const PUSH_OPTIONS = { urgency: "high" as const, TTL: 12 * 3600 };
+
 const FLIGHTAWARE_MONTHLY_LIMIT = 400;   // free calls per month (see check-flights)
 const WARN_AT = 0.8;                     // warn at 80% used
 const hoursAgo = (t: string) => (Date.now() - new Date(t).getTime()) / 3600000;
@@ -78,7 +81,7 @@ async function checks() {
   else ok.push(`Arc alerts on (${arcPhones} phone${arcPhones > 1 ? "s" : ""})`);
 
   // 5. A flight in the air with stale data
-  const { data: flights } = await supabase.from("flights").select("flightNumber, actualDepartureUtc, actualArrivalUtc, lastCheckedUtc, status");
+  const { data: flights } = await supabase.from("flights").select("flightNumber, actualDepartureUtc, actualArrivalUtc, lastCheckedUtc, status").not("hidden", "is", true);
   for (const f of flights || []) {
     const inAir = f.actualDepartureUtc && !f.actualArrivalUtc && !["Arrived", "Canceled", "Diverted"].includes(f.status);
     if (inAir && (!f.lastCheckedUtc || hoursAgo(f.lastCheckedUtc) > 1)) {
@@ -96,7 +99,8 @@ async function alertJosh(title: string, body: string) {
     try {
       await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify({ title, body: body.slice(0, 300), tag: "watchdog" })
+        JSON.stringify({ title, body: body.slice(0, 300), tag: "watchdog" }),
+        PUSH_OPTIONS
       );
     } catch { /* ignore */ }
   }

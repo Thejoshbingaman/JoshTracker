@@ -12,6 +12,9 @@ webpush.setVapidDetails(
   Deno.env.get("VAPID_PRIVATE_KEY")!
 );
 
+// High urgency: phones deliver at once, even when asleep or saving battery. Kept for 12 hours if the phone is offline.
+const PUSH_OPTIONS = { urgency: "high" as const, TTL: 12 * 3600 };
+
 const HOME_AIRPORTS = ["BWI", "MDT", "PHL"];
 const CITY: Record<string, string> = {
   BWI: "Baltimore", MDT: "Harrisburg", PHL: "Philadelphia", LAX: "Los Angeles",
@@ -168,7 +171,8 @@ async function sendToAll(payload: any) {
     try {
       await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify(payload)
+        JSON.stringify(payload),
+        PUSH_OPTIONS
       );
       sent++;
     } catch (err: any) {
@@ -277,7 +281,7 @@ Deno.serve(async (req) => {
     }
 
     // 1. Live checks for flights that are close
-    const { data: before, error } = await supabase.from("flights").select("*");
+    const { data: before, error } = await supabase.from("flights").select("*").not("hidden", "is", true);   // hidden = removed in the app
     if (error) throw error;
     const results: string[] = [];
     // {"force": true} = check every flight in the next 2 days right now (for testing)
@@ -289,7 +293,7 @@ Deno.serve(async (req) => {
     }
 
     // 2. Alerts, using the freshest data
-    const { data: after } = await supabase.from("flights").select("*");
+    const { data: after } = await supabase.from("flights").select("*").not("hidden", "is", true);
     for (const f of after || []) {
       results.push(...(await alertsFor(f)));
     }

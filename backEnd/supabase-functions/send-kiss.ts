@@ -18,6 +18,9 @@ webpush.setVapidDetails(
   Deno.env.get("VAPID_PRIVATE_KEY")!
 );
 
+// High urgency: phones deliver at once, even when asleep or saving battery. Kept for 12 hours if the phone is offline.
+const PUSH_OPTIONS = { urgency: "high" as const, TTL: 12 * 3600 };
+
 const PER_MINUTE_LIMIT = 20;          // more than this in 60 seconds = refused
 const MILESTONES = [50, 100, 150];    // Arc's 50th, 100th, and 150th of each button unlock a note (rows in the milestones table)
 
@@ -40,7 +43,8 @@ async function push(subs: any[], payload: any) {
     try {
       await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify(payload)
+        JSON.stringify(payload),
+        PUSH_OPTIONS
       );
       sent++;
     } catch (err: any) {
@@ -148,6 +152,7 @@ Deno.serve(async (req) => {
       ko: "the K.O.", storm: "the kiss storm",
       early: "the early bird", sync: "great minds", home: "home state",
       streak: "the 7-day streak", photo: "your silly photo",
+      scrapbook: "the scrapbook", wish: "the 11:11 wish", midnight: "the early shift (a kiss at midnight)", moon: "the full moon", rewind: "rewind", bullseye: "the bullseye", ourminute: "our minute", stamp: "the note under the stamp", pi: "pi day", touchdown: "touchdown", space: "seen from space",
     };
     // These two alert Josh every time, not just the first time
     const EVERY_TIME: Record<string, { title: string; body: string }> = {
@@ -160,10 +165,10 @@ Deno.serve(async (req) => {
       const { count: found } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true })
         .eq("user_id", user.id).in("egg", Object.keys(EGGS));
       const isNew = (added || []).length > 0;
-      // 12 eggs, plus the retired shake punch if she found it before it was removed
+      // 23 eggs, plus the retired shake punch if she found it before it was removed
       const { count: hasShake } = await admin.from("easter_eggs").select("egg", { count: "exact", head: true })
         .eq("user_id", user.id).eq("egg", "shake");
-      const total = 12 + (hasShake ? 1 : 0);
+      const total = 23 + (hasShake ? 1 : 0);
       if (EVERY_TIME[body.egg] && !isJosh) {
         const { data: joshSubs } = await admin.from("push_subscriptions").select("*").eq("user_id", adminId);
         await push(joshSubs || [], { ...EVERY_TIME[body.egg], tag: `egg-${body.egg}-${Date.now()}` });
